@@ -47,14 +47,13 @@ shows nothing on screen — that's normal, just type it and press Enter.
 
 ## Step 1 — Get the project onto the Mint machine
 
-**If the project is on GitHub** (ask whoever gave you this guide for the
-URL), clone it *with its submodule* — the `freeink-sdk` folder is a separate
+Clone it *with its submodule* — the `freeink-sdk` folder is a separate
 repository that provides the display drivers, and a plain download won't
 include it:
 
 ```sh
 sudo apt update && sudo apt install -y git
-git clone --recurse-submodules https://github.com/YOUR-USER/ereader_firmware.git
+git clone --recurse-submodules https://github.com/Frostbite1536/ereader_firmware.git
 cd ereader_firmware
 ```
 
