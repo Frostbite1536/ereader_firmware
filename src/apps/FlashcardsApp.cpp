@@ -9,27 +9,17 @@
 
 namespace {
 using namespace freeink::ui;
-
-// ActionIds 30-39 (Flashcards range, CLAUDE.md).
-enum : ActionId {
-  ACT_DECK_PICK = 30,
-};
+// ActionIds 30-39 are reserved for Flashcards (CLAUDE.md); none in use — the
+// deck list is selection-driven, not action-dispatched.
 }  // namespace
 
-void FlashcardsApp::begin(AppContext& ctx) {
-  ctx_ = &ctx;
-  ctx.ui.on(ACT_DECK_PICK, [](const ActionEvent& ev, void* self) {
-    auto& a = *static_cast<FlashcardsApp*>(self);
-    if (a.loadDeck(ev.value)) {
-      a.mode_ = Mode::Card;
-      a.ctx_->ui.invalidate(RefreshHint::Full);
-    }
-  }, this);
-}
+void FlashcardsApp::begin(AppContext& ctx) { ctx_ = &ctx; }
 
 void FlashcardsApp::onEnter() {
   mode_ = Mode::DeckList;
   scanDecks();
+  deckSel_ = 0;
+  deckTop_ = 0;
   ctx_->ui.setScreen(&FlashcardsApp::drawScreen, this, RefreshHint::Full);
 }
 
@@ -38,7 +28,23 @@ void FlashcardsApp::tick() {
   auto& ui = ctx_->ui;
 
   if (mode_ == Mode::DeckList) {
-    if (in.wasPressed(InputManager::BTN_BACK)) ctx_->switchTo(APP_LAUNCHER);
+    if (in.wasPressed(InputManager::BTN_BACK)) {
+      ctx_->switchTo(APP_LAUNCHER);
+      return;
+    }
+    if (deckCount_ == 0) return;
+    if (in.wasPressed(InputManager::BTN_DOWN) && deckSel_ + 1 < deckCount_) {
+      deckSel_++;
+      ui.invalidate(RefreshHint::Fast);
+    }
+    if (in.wasPressed(InputManager::BTN_UP) && deckSel_ > 0) {
+      deckSel_--;
+      ui.invalidate(RefreshHint::Fast);
+    }
+    if (in.wasPressed(InputManager::BTN_CONFIRM) && loadDeck(deckSel_)) {
+      mode_ = Mode::Card;
+      ui.invalidate(RefreshHint::Full);
+    }
     return;
   }
 
@@ -113,7 +119,7 @@ void FlashcardsApp::drawScreen(UiApp::ScreenType& screen, void* self) {
 }
 
 void FlashcardsApp::drawDeckList(UiApp::ScreenType& screen) {
-  screen.header("Flashcards", "decks in /decks on the SD card");
+  screen.header("Flashcards", "UP/DOWN pick a deck, CONFIRM opens");
   if (deckCount_ == 0) {
     screen.spacer(24);
     screen.popup("No decks found.\nAdd /decks/<name>.txt with one\nquestion|answer per line.");
@@ -124,7 +130,21 @@ void FlashcardsApp::drawDeckList(UiApp::ScreenType& screen) {
     items[i].label = deckNames_[i];
     items[i].actionValue = i;
   }
-  screen.list(items, deckCount_, deckSel_, ACT_DECK_PICK);
+
+  // Selection-driven: rows are not interactive (NO_ACTION registers nothing);
+  // tick() owns UP/DOWN/CONFIRM and this keeps the selected row scrolled into
+  // view — the focus system can't reach rows past the first screenful.
+  const uint16_t visible = listVisibleRows(screen.body(), screen.theme().rowHeight, 0);
+  deckTop_ = listTopIndexFor(deckSel_, deckTop_, visible, static_cast<uint16_t>(deckCount_));
+
+  ListProps lp;
+  lp.items = items;
+  lp.count = static_cast<uint16_t>(deckCount_);
+  lp.selectedIndex = deckSel_;
+  lp.topIndex = deckTop_;
+  lp.action = NO_ACTION;
+  lp.rowHeight = 0;  // inherit theme metric
+  screen.list(lp);
 }
 
 void FlashcardsApp::drawCard(UiApp::ScreenType& screen) {

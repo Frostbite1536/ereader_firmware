@@ -46,7 +46,13 @@ constexpr freeink::ui::FontId UI_BODY = 1;
 constexpr freeink::ui::FontId UI_TITLE = 2;
 constexpr freeink::ui::FontId WRITER_BASE = 3;  // +0..3 = S/M/L/XL
 
-inline void installWriterFonts(freeink::ui::DisplayTarget& target) {
+// UI chrome reuses the writer faces (16/20/25) instead of the bundled 34px
+// Noto Sans: subtitle rows and headers fit, and the theme metrics are derived
+// from the real body-font line height (themeTokensForLineHeight in main.cpp).
+inline void installFonts(freeink::ui::DisplayTarget& target) {
+  target.setFont(UI_SMALL, WRITER_FONT_S);
+  target.setFont(UI_BODY, WRITER_FONT_M);
+  target.setFont(UI_TITLE, WRITER_FONT_L);
   target.setFont(WRITER_BASE + 0, WRITER_FONT_S);
   target.setFont(WRITER_BASE + 1, WRITER_FONT_M);
   target.setFont(WRITER_BASE + 2, WRITER_FONT_L);

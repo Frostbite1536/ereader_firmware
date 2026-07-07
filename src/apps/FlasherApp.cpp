@@ -13,7 +13,6 @@ using namespace freeink::ui;
 
 // ActionIds 40-49 (Flasher range, CLAUDE.md).
 enum : ActionId {
-  ACT_BIN_PICK = 40,
   ACT_GO = 41,
   ACT_CANCEL = 42,
 };
@@ -21,13 +20,6 @@ enum : ActionId {
 
 void FlasherApp::begin(AppContext& ctx) {
   ctx_ = &ctx;
-
-  ctx.ui.on(ACT_BIN_PICK, [](const ActionEvent& ev, void* self) {
-    auto& f = *static_cast<FlasherApp*>(self);
-    f.chosen_ = ev.value;
-    f.mode_ = Mode::Confirm;
-    f.ctx_->ui.invalidate(RefreshHint::Fast);
-  }, this);
 
   // Handlers only set flags — the actual flash runs from tick(), outside the
   // UI render pass (handlers are dispatched inside FreeInkApp::render()).
@@ -50,6 +42,8 @@ void FlasherApp::begin(AppContext& ctx) {
 void FlasherApp::onEnter() {
   mode_ = Mode::List;
   chosen_ = -1;
+  binSel_ = 0;
+  binTop_ = 0;
   flashQueued_ = false;
   scanBins();
   ctx_->ui.setScreen(&FlasherApp::drawScreen, this, RefreshHint::Full);
@@ -57,6 +51,7 @@ void FlasherApp::onEnter() {
 
 void FlasherApp::tick() {
   auto& in = ctx_->input;
+  auto& ui = ctx_->ui;
 
   if (flashQueued_) {
     flashQueued_ = false;
@@ -65,20 +60,40 @@ void FlasherApp::tick() {
     return;
   }
 
-  if (in.wasPressed(InputManager::BTN_BACK)) {
-    switch (mode_) {
-      case Mode::List:
+  switch (mode_) {
+    case Mode::List:
+      if (in.wasPressed(InputManager::BTN_BACK)) {
         ctx_->switchTo(APP_LAUNCHER);
-        break;
-      case Mode::Confirm:
-      case Mode::Failed:
+        return;
+      }
+      if (binCount_ == 0) return;
+      if (in.wasPressed(InputManager::BTN_DOWN) && binSel_ + 1 < binCount_) {
+        binSel_++;
+        ui.invalidate(RefreshHint::Fast);
+      }
+      if (in.wasPressed(InputManager::BTN_UP) && binSel_ > 0) {
+        binSel_--;
+        ui.invalidate(RefreshHint::Fast);
+      }
+      if (in.wasPressed(InputManager::BTN_CONFIRM)) {
+        chosen_ = binSel_;
+        mode_ = Mode::Confirm;
+        ui.invalidate(RefreshHint::Fast);
+      }
+      break;
+    case Mode::Confirm:
+    case Mode::Failed:
+      // The dialog's two options are the only interactions on screen; UP/DOWN
+      // focuses them and CONFIRM dispatches (route() ignores confirm with no
+      // focus, so entering the dialog can't instantly trigger an option).
+      if (in.wasPressed(InputManager::BTN_BACK)) {
         mode_ = Mode::List;
         chosen_ = -1;
-        ctx_->ui.invalidate(RefreshHint::Fast);
-        break;
-      case Mode::Flashing:
-        break;  // no backing out mid-flash
-    }
+        ui.invalidate(RefreshHint::Fast);
+      }
+      break;
+    case Mode::Flashing:
+      break;  // no backing out mid-flash
   }
 }
 
@@ -94,6 +109,11 @@ void FlasherApp::scanBins() {
 }
 
 void FlasherApp::runFlash() {
+  if (chosen_ < 0 || chosen_ >= binCount_) {  // belt: never index binNames_ out of range
+    mode_ = Mode::List;
+    ctx_->ui.invalidate(RefreshHint::Fast);
+    return;
+  }
   snprintf(pathBuf_, sizeof(pathBuf_), "/firmware/%s", binNames_[chosen_]);
 
   // Repaint helper: render the current screen state and push a fast refresh.
@@ -143,10 +163,29 @@ void FlasherApp::drawScreen(UiApp::ScreenType& screen, void* self) {
   screen.header("Swap firmware", "/firmware on the SD card");
 
   if (f.mode_ == Mode::Flashing) {
-    static char msg[64];
+    static char msg[96];
     snprintf(msg, sizeof(msg), "Flashing %s\n%u%%\n\nDo not power off.", f.binNames_[f.chosen_],
              static_cast<unsigned>(f.progressPct_));
     screen.popup(msg);
+    return;
+  }
+
+  if (f.mode_ == Mode::Confirm && f.chosen_ >= 0) {
+    // Dialog only — the list stays un-registered so its rows can't take focus
+    // behind the dim, and LEFT/RIGHT can't reach the options (InputDefault).
+    static const DialogOption options[2] = {
+        {"Cancel", ACT_CANCEL},
+        {"Flash + reboot", ACT_GO},
+    };
+    OptionDialogProps dlg;
+    dlg.title = "Flash this firmware?";
+    dlg.headline = f.binNames_[f.chosen_];
+    dlg.message = "It boots from the spare slot; this firmware stays installed. DOWN selects, CONFIRM activates.";
+    dlg.options = options;
+    dlg.optionCount = 2;
+    dlg.inputMask = InputDefault;
+    dlg.dimBackground = true;
+    screen.dialog(dlg);
     return;
   }
 
@@ -161,22 +200,19 @@ void FlasherApp::drawScreen(UiApp::ScreenType& screen, void* self) {
     items[i].label = f.binNames_[i];
     items[i].actionValue = i;
   }
-  screen.list(items, f.binCount_, -1, ACT_BIN_PICK);
 
-  if (f.mode_ == Mode::Confirm && f.chosen_ >= 0) {
-    static const DialogOption options[2] = {
-        {"Flash + reboot", ACT_GO},
-        {"Cancel", ACT_CANCEL},
-    };
-    OptionDialogProps dlg;
-    dlg.title = "Flash this firmware?";
-    dlg.headline = f.binNames_[f.chosen_];
-    dlg.message = "It boots from the spare slot; this firmware stays installed.";
-    dlg.options = options;
-    dlg.optionCount = 2;
-    dlg.dimBackground = true;
-    screen.dialog(dlg);
-  }
+  // Selection-driven, same pattern as the Flashcards deck list.
+  const uint16_t visible = listVisibleRows(screen.body(), screen.theme().rowHeight, 0);
+  f.binTop_ = listTopIndexFor(f.binSel_, f.binTop_, visible, static_cast<uint16_t>(f.binCount_));
+
+  ListProps lp;
+  lp.items = items;
+  lp.count = static_cast<uint16_t>(f.binCount_);
+  lp.selectedIndex = f.binSel_;
+  lp.topIndex = f.binTop_;
+  lp.action = NO_ACTION;
+  lp.rowHeight = 0;  // inherit theme metric
+  screen.list(lp);
 
   if (f.mode_ == Mode::Failed) {
     screen.popup(f.failMsg_);

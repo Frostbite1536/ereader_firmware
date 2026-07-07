@@ -58,5 +58,14 @@ void LauncherApp::drawScreen(UiApp::ScreenType& screen, void* self) {
   items[ROW_SLEEP].subtitle = "deep sleep now (power button wakes)";
   for (int i = 0; i < ROW_COUNT; i++) items[i].actionValue = i;
 
-  screen.list(items, ROW_COUNT, -1, ACT_LAUNCH);
+  ListProps lp;
+  lp.items = items;
+  lp.count = ROW_COUNT;
+  lp.selectedIndex = -1;
+  lp.action = ACT_LAUNCH;
+  // No InputPrev/InputNext: with the default mask a stray LEFT/RIGHT press
+  // dispatches the FIRST row (launching the Writer unasked).
+  lp.inputMask = InputDefault;
+  lp.rowHeight = 0;  // inherit theme metric
+  screen.list(lp);
 }

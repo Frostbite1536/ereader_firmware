@@ -2,6 +2,7 @@
 
 #include <SDCardManager.h>
 
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 
@@ -31,11 +32,11 @@ enum MenuRow : int16_t {
   ROW_COUNT,
 };
 
-constexpr uint8_t HID_MOD_CTRL = 0x11;  // left | right ctrl
-constexpr size_t MAX_PAIR_ROWS = 12;    // rows that fit; scan list is capped for focus nav
-
-uint32_t lastScanDraw = 0;
-bool lastConnected = false;
+constexpr uint8_t HID_MOD_CTRL = 0x11;  // left | right ctrl (HID modifier byte)
+// Focus-driven lists can only reach rows that fit on screen (the SDK list
+// virtualizes but focus does not scroll it), so cap the pairing list at what
+// fits above the footer on both panels.
+constexpr size_t MAX_PAIR_ROWS = 8;
 }  // namespace
 
 void WriterApp::begin(AppContext& ctx) {
@@ -61,6 +62,7 @@ void WriterApp::begin(AppContext& ctx) {
       case ROW_PAIR:
         w.mode_ = Mode::Pairing;
         w.scanKicked_ = false;
+        w.pairMsg_[0] = 0;
         ui.invalidate(RefreshHint::Fast);
         break;
       case ROW_FONT:
@@ -87,8 +89,9 @@ void WriterApp::begin(AppContext& ctx) {
 
   ctx.ui.on(ACT_PAIR_PICK, [](const ActionEvent& ev, void* self) {
     auto& w = *static_cast<WriterApp*>(self);
-    if (ev.value < BleHid.deviceCount()) {
+    if (ev.value >= 0 && ev.value < BleHid.deviceCount()) {
       BleHid.stopScan();
+      w.pairMsg_[0] = 0;
       BleHid.connect(BleHid.device(ev.value).addr);
     }
     w.ctx_->ui.invalidate(RefreshHint::Fast);
@@ -96,6 +99,7 @@ void WriterApp::begin(AppContext& ctx) {
 
   ctx.ui.on(ACT_PAIR_RESCAN, [](const ActionEvent&, void* self) {
     auto& w = *static_cast<WriterApp*>(self);
+    w.pairMsg_[0] = 0;
     BleHid.startScan(5000);
     w.ctx_->ui.invalidate(RefreshHint::Fast);
   }, this);
@@ -113,6 +117,7 @@ void WriterApp::onEnter() {
   // NimBLE bring-up requires full CPU frequency (INVARIANTS.md #12); we never
   // downclock, so this holds by construction.
   BleHid.begin("InkPad");
+  lastConnected_ = BleHid.isConnected();
   ctx_->ui.setScreen(&WriterApp::drawScreen, this, RefreshHint::Full);
 }
 
@@ -162,17 +167,35 @@ void WriterApp::tick() {
         mode_ = Mode::Menu;
         ui.invalidate(RefreshHint::Fast);
       }
-      if (!scanKicked_ && !BleHid.isConnected()) {
+      if (!scanKicked_ && !BleHid.isConnected() && !BleHid.isConnecting()) {
         BleHid.startScan(5000);
         scanKicked_ = true;
       }
-      // Live-update the list while scanning / connecting.
-      if (BleHid.isScanning() && millis() - lastScanDraw > 1500) {
-        lastScanDraw = millis();
+      // Some keyboards demand a passkey instead of Just Works bonding; without
+      // showing it, pairing stalls silently.
+      uint32_t passkey = 0;
+      if (BleHid.takePairingPasskey(passkey)) {
+        snprintf(pairMsg_, sizeof(pairMsg_), "Type %06u on the keyboard,\nthen press Enter.",
+                 static_cast<unsigned>(passkey));
         ui.invalidate(RefreshHint::Fast);
       }
-      if (BleHid.isConnected() != lastConnected) {
-        lastConnected = BleHid.isConnected();
+      char fail[40];
+      if (BleHid.takeConnectFailure(fail, sizeof(fail))) {
+        snprintf(pairMsg_, sizeof(pairMsg_), "Connect failed:\n%s", fail);
+        ui.invalidate(RefreshHint::Fast);
+      }
+      // Live-update the list while scanning.
+      if (BleHid.isScanning() && millis() - lastScanDraw_ > 1500) {
+        lastScanDraw_ = millis();
+        ui.invalidate(RefreshHint::Fast);
+      }
+      if (BleHid.isConnected() != lastConnected_) {
+        lastConnected_ = BleHid.isConnected();
+        if (lastConnected_) {  // pairing done — drop the user back into the text
+          mode_ = Mode::Editing;
+          pairMsg_[0] = 0;
+          strlcpy(toast_, "Keyboard connected", sizeof(toast_));
+        }
         ui.invalidate(RefreshHint::Fast);
       }
       break;
@@ -187,7 +210,8 @@ void WriterApp::handleKey(const freeink::KeyEvent& ev, bool& fast, bool& full) {
   const bool ctrl = (ev.mods & HID_MOD_CTRL) != 0;
 
   if (ctrl && ev.ch) {
-    switch (ev.ch) {
+    // Normalize: with Shift also held the keymap reports 'S', not 's'.
+    switch (tolower(static_cast<unsigned char>(ev.ch))) {
       case 's':
         strlcpy(toast_, save() ? "Saved" : "Save FAILED", sizeof(toast_));
         fast = true;
@@ -214,9 +238,14 @@ void WriterApp::handleKey(const freeink::KeyEvent& ev, bool& fast, bool& full) {
     case SpecialKey::Enter:
       if (insertChar('\n')) triggerRefresh(fast, full);
       return;
-    case SpecialKey::Tab:
-      if (insertChar('\t')) triggerRefresh(fast, full);
+    case SpecialKey::Tab: {
+      // Two spaces, not '\t': buffer, saved file, and rendered canvas stay
+      // byte-identical (the panel fonts have no tab glyph).
+      bool ok = insertChar(' ');
+      if (insertChar(' ')) ok = true;
+      if (ok) triggerRefresh(fast, full);
       return;
+    }
     case SpecialKey::Backspace:
       backspace();
       return;  // no refresh (INVARIANTS.md #3) — Esc redraws on demand
@@ -252,6 +281,7 @@ bool WriterApp::insertChar(char c) {
   memmove(buf_ + cursor_ + 1, buf_ + cursor_, len_ - cursor_);
   buf_[cursor_++] = c;
   len_++;
+  buf_[len_] = 0;
   dirty_ = true;
   return true;
 }
@@ -261,6 +291,7 @@ void WriterApp::backspace() {
   memmove(buf_ + cursor_ - 1, buf_ + cursor_, len_ - cursor_);
   cursor_--;
   len_--;
+  buf_[len_] = 0;
   dirty_ = true;
 }
 
@@ -268,6 +299,7 @@ void WriterApp::deleteForward() {
   if (cursor_ >= len_) return;
   memmove(buf_ + cursor_, buf_ + cursor_ + 1, len_ - cursor_ - 1);
   len_--;
+  buf_[len_] = 0;
   dirty_ = true;
 }
 
@@ -318,7 +350,9 @@ bool WriterApp::save() {
 
 void WriterApp::newDocument() {
   saveIfDirty();
-  len_ = cursor_ = viewStart_ = 0;
+  len_ = cursor_ = 0;
+  topLine_ = 0;
+  buf_[0] = 0;
   fastRefreshes_ = 0;
   docPath_[0] = 0;
   allocDocPath();
@@ -329,9 +363,10 @@ void WriterApp::newDocument() {
 void WriterApp::loadLastDocument() {
   if (SETTINGS.lastDoc[0] && SdMan.exists(SETTINGS.lastDoc)) {
     strlcpy(docPath_, SETTINGS.lastDoc, sizeof(docPath_));
+    // readFileToBuffer reads at most CAP-1 bytes and NUL-terminates.
     len_ = SdMan.readFileToBuffer(docPath_, buf_, CAP);
     cursor_ = len_;
-    viewStart_ = 0;
+    topLine_ = 0;  // first draw scrolls the window to the caret
     dirty_ = false;
   } else {
     newDocument();
@@ -359,22 +394,6 @@ size_t WriterApp::wordCount() const {
     inWord = !ws;
   }
   return words;
-}
-
-void WriterApp::buildRenderBuffer() {
-  size_t r = 0;
-  for (size_t i = viewStart_; i <= len_ && r < sizeof(renderBuf_) - 4; i++) {
-    if (i == cursor_) renderBuf_[r++] = '|';  // cursor glyph
-    if (i == len_) break;
-    const char c = buf_[i];
-    if (c == '\t') {  // render tabs as two spaces (glyph-safe, cursor stays mapped)
-      renderBuf_[r++] = ' ';
-      renderBuf_[r++] = ' ';
-    } else {
-      renderBuf_[r++] = c;
-    }
-  }
-  renderBuf_[r] = 0;
 }
 
 void WriterApp::drawEditor(UiApp::ScreenType& screen) {
@@ -414,37 +433,22 @@ void WriterApp::drawEditor(UiApp::ScreenType& screen) {
 
   TextStyle st;
   st.font = fonts::WRITER_BASE + SETTINGS.fontSize;
-  st.align = TextAlign::Left;
-  st.maxLines = 250;
 
-  // Tail-follow: advance the view start until the visible text (with cursor)
-  // fits the canvas. Converges in a few iterations; only runs on refresh.
-  if (viewStart_ > cursor_) viewStart_ = cursor_;
-  buildRenderBuffer();
-  Size sz = measureWrappedText(screen.target(), renderBuf_, st, canvas.width);
-  int guard = 0;
-  while (sz.height > canvas.height && guard++ < 300) {
-    size_t adv = viewStart_;
-    const size_t scanEnd = (adv + 160 < len_) ? adv + 160 : len_;
-    size_t nl = adv;
-    while (nl < scanEnd && buf_[nl] != '\n') nl++;
-    if (nl < scanEnd) {
-      adv = nl + 1;  // drop one paragraph line
-    } else {
-      adv += 80;  // long paragraph: drop roughly a line's worth at a word edge
-      while (adv < len_ && buf_[adv] != ' ' && buf_[adv] != '\n') adv++;
-      if (adv < len_) adv++;
-    }
-    if (adv > cursor_) adv = cursor_;
-    if (adv <= viewStart_) break;
-    viewStart_ = adv;
-    buildRenderBuffer();
-    sz = measureWrappedText(screen.target(), renderBuf_, st, canvas.width);
-  }
+  // Scroll by visual line so the caret stays on screen. textAreaMeasure walks
+  // the same wrap the textArea draws with — no iterative re-measuring, and no
+  // layoutText 16-line cap (the reason a plain text() cannot render the doc).
+  auto& target = screen.target();
+  const TextAreaMetrics m = textAreaMeasure(target, canvas.width, buf_, st, static_cast<uint32_t>(cursor_));
+  const uint16_t visible = textAreaVisibleLines(canvas, target.lineHeight(st.font));
+  topLine_ = textAreaTopLineFor(m.caretLine, topLine_, visible, m.lineCount);
 
-  Rect textRect = canvas;  // top-anchored: clamp the rect to the measured height
-  if (sz.height < textRect.height) textRect.height = sz.height;
-  if (renderBuf_[0]) screen.target().text(textRect, renderBuf_, st);
+  TextAreaProps props;
+  props.text = buf_;
+  props.cursor = static_cast<uint32_t>(cursor_);
+  props.topLine = topLine_;
+  props.style = st;
+  props.showCaret = true;
+  screen.textArea(props);
 }
 
 void WriterApp::drawMenu(UiApp::ScreenType& screen) {
@@ -469,7 +473,16 @@ void WriterApp::drawMenu(UiApp::ScreenType& screen) {
   items[ROW_EXIT].label = "Exit to launcher";
   for (int i = 0; i < ROW_COUNT; i++) items[i].actionValue = i;
 
-  screen.list(items, ROW_COUNT, -1, ACT_MENU_PICK);
+  ListProps lp;
+  lp.items = items;
+  lp.count = ROW_COUNT;
+  lp.selectedIndex = -1;
+  lp.action = ACT_MENU_PICK;
+  // No InputPrev/InputNext: route() would fire the FIRST such row on a stray
+  // LEFT/RIGHT press (the default list mask accepts them).
+  lp.inputMask = InputDefault;
+  lp.rowHeight = 0;  // 0 = inherit the theme metric (the default 36 clips subtitles)
+  screen.list(lp);
 }
 
 void WriterApp::drawPairing(UiApp::ScreenType& screen) {
@@ -497,9 +510,17 @@ void WriterApp::drawPairing(UiApp::ScreenType& screen) {
     items[i].actionValue = i;
   }
   if (count > 0) {
-    screen.list(items, count, -1, ACT_PAIR_PICK);
-  } else {
+    ListProps lp;
+    lp.items = items;
+    lp.count = count;
+    lp.selectedIndex = -1;
+    lp.action = ACT_PAIR_PICK;
+    lp.inputMask = InputDefault;  // see drawMenu — LEFT/RIGHT must stay inert
+    lp.rowHeight = 0;
+    screen.list(lp);
+  } else if (!pairMsg_[0]) {
     screen.spacer(24);
     screen.popup(BleHid.isScanning() ? "Scanning for keyboards..." : "No devices found. Rescan?");
   }
+  if (pairMsg_[0]) screen.popup(pairMsg_);
 }

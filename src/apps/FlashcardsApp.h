@@ -5,6 +5,10 @@
 // Flashcards from plain text decks: /decks/*.txt, one card per line,
 // "question|answer". DOWN flips / advances, UP goes back, BACK returns to the
 // deck list (then the launcher).
+//
+// The deck list is selection-driven (UP/DOWN + CONFIRM handled in tick(), rows
+// draw with selectedIndex/topIndex): unlike the UI focus system, this scrolls,
+// so every deck stays reachable however many fit on screen.
 class FlashcardsApp : public App {
  public:
   void begin(AppContext& ctx) override;
@@ -31,7 +35,8 @@ class FlashcardsApp : public App {
 
   char deckNames_[MAX_DECKS][40];
   int deckCount_ = 0;
-  int16_t deckSel_ = 0;
+  int16_t deckSel_ = 0;   // selection, moved by UP/DOWN in tick()
+  uint16_t deckTop_ = 0;  // first visible row (kept in range by the draw)
 
   char deckBuf_[DECK_BYTES];  // deck file, parsed in place
   const char* questions_[MAX_CARDS];

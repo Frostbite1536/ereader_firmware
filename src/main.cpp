@@ -118,10 +118,13 @@ void setup() {
   // 3. UI runtime over the display's framebuffer (logical portrait).
   rawTarget = new freeink::ui::DisplayTarget(display.getFrameBuffer(), display.getDisplayWidth(),
                                              display.getDisplayHeight(), display.getDisplayWidthBytes());
-  fonts::installWriterFonts(*rawTarget);
+  fonts::installFonts(*rawTarget);
   target = new freeink::ui::InvertedDrawTarget(*rawTarget, SETTINGS.darkMode);
   ui = new UiApp(*target, rawTarget->deviceContext());
-  ui->setTheme(freeink::ui::defaultThemeTokens(fonts::UI_SMALL, fonts::UI_BODY, fonts::UI_TITLE));
+  // Metric tokens derived from the body font's line height — the static
+  // defaultThemeTokens() metrics assume ~18px fonts and clip subtitle rows.
+  ui->setTheme(freeink::ui::themeTokensForLineHeight(rawTarget->lineHeight(fonts::UI_BODY), fonts::UI_SMALL,
+                                                     fonts::UI_BODY, fonts::UI_TITLE));
 
   ctx = new AppContext{display, *target, *ui, input, *battery};
 
@@ -151,6 +154,11 @@ void loop() {
   if (ui->invalidated() || anyButton) {
     ui->render(snap);
     RefreshHint hint = ui->lastRenderRefreshHint();
+
+    // Focus moves happen inside render() AFTER the frame was drawn, and the UI
+    // does not self-invalidate for them — without this the highlight would
+    // move invisibly (the re-render below draws it, then the panel updates).
+    if (snap.focusNext || snap.focusPrev) ui->invalidate(RefreshHint::Fast);
 
     // An action handler may have changed state (or requested an app switch)
     // during dispatch: redraw before pushing so the panel never shows a stale

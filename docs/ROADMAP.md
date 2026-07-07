@@ -35,3 +35,12 @@
 - 32 KB per document (~5,000 words). Status bar warns at 90%; FULL at cap.
 - No RTC-based filenames on X4 (no clock); documents are `draft-NNN.txt`.
 - Keyboard layout is US QWERTY (HID usage translation in the SDK).
+- Tab inserts two spaces (the panel fonts have no tab glyph; buffer, file,
+  and screen stay byte-identical). Tabs in externally created files render
+  one space wide.
+- Buttons are polled synchronously: a press landing during a panel refresh
+  (~0.3-2 s) is dropped. BLE keystrokes are queued and never lost. Fix path:
+  InputManager::beginAsync + popPress.
+- The keyboard-pairing list shows the first 8 devices found (focus-driven
+  lists can't scroll; unnamed devices are filtered out at build level, so 8
+  is plenty in practice). Deck/bin lists scroll and have no such cap.

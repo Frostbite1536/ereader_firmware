@@ -16,7 +16,8 @@ A digital typewriter, deliberately dumber than Notepad:
 
 - Type on any **BLE keyboard**; text goes to a buffer, the e-ink panel stays
   still. The screen refreshes **only** on `Enter`, `Tab`, or `.` — end of a
-  thought, not every keystroke. No flashing, tiny battery draw.
+  thought, not every keystroke. No flashing, tiny battery draw. (`Tab`
+  inserts two spaces — the saved `.txt` matches the screen byte for byte.)
 - `Esc` redraws on demand (see where you are after backspacing blind);
   `Ctrl+L` runs a full ghost-clearing refresh; every 15th refresh is promoted
   to a full one automatically.

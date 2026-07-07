@@ -13,6 +13,11 @@
 //
 // Shortcuts: Ctrl+S save · Ctrl+N new file · Ctrl+L full refresh ·
 // Ctrl+D dark mode · Esc redraw. BACK button opens the menu.
+//
+// The canvas is the SDK's textArea component: it word-wraps the whole buffer
+// with no line cap, draws the caret natively, and scrolls by visual line
+// (textAreaMeasure + textAreaTopLineFor). The buffer is kept NUL-terminated
+// (len_ < CAP always) because textArea renders it in place — no render copy.
 class WriterApp : public App {
  public:
   void begin(AppContext& ctx) override;
@@ -47,27 +52,26 @@ class WriterApp : public App {
   void drawEditor(UiApp::ScreenType& screen);
   void drawMenu(UiApp::ScreenType& screen);
   void drawPairing(UiApp::ScreenType& screen);
-  void buildRenderBuffer();
   size_t wordCount() const;
 
   AppContext* ctx_ = nullptr;
   Mode mode_ = Mode::Editing;
 
-  char buf_[CAP];
+  char buf_[CAP];         // document text, always NUL-terminated at buf_[len_]
   size_t len_ = 0;
   size_t cursor_ = 0;
-  char renderBuf_[CAP + 8];
-  size_t viewStart_ = 0;  // first buffer offset drawn (tail-follow scrolling)
+  uint32_t topLine_ = 0;  // first visual line drawn (textArea scroll window)
 
   char docPath_[64] = {0};
   bool dirty_ = false;
   uint16_t fastRefreshes_ = 0;  // since the last full refresh
   char toast_[24] = {0};        // one-shot status-bar note ("Saved", ...)
 
-  // menu / pairing UI state
-  int16_t menuSel_ = 0;
-  int16_t pairSel_ = 0;
+  // pairing UI state
   bool scanKicked_ = false;
+  bool lastConnected_ = false;
+  uint32_t lastScanDraw_ = 0;
+  char pairMsg_[64] = {0};  // passkey prompt / connect-failure note
 
   // status-bar scratch (rebuilt each draw; fixed so drawing never allocates)
   char stLeft_[80];
