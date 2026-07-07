@@ -63,12 +63,17 @@ pio run -e xteink -t upload  # first-time install over USB-C
 The first-time USB flash uses the standard PlatformIO/esptool path. After
 that, updates can ride the SD-swap flow.
 
+New to flashing? **`docs/TESTING-LINUX.md`** is a zero-assumed-knowledge
+walkthrough (Linux Mint): install the tools, build, flash, prepare the SD
+card, pair a keyboard, and run the full on-device test checklist.
+
 ## Repo map
 
 - `docs/HARDWARE.md` — verified hardware facts (and a table of corrections to
   the AI conversation that seeded this project — read it before trusting any
   pin number from a chat log).
 - `docs/ARCHITECTURE.md`, `docs/INVARIANTS.md`, `docs/ROADMAP.md`
+- `docs/TESTING-LINUX.md` — beginner-friendly build/flash/test walkthrough
 - `src/` — firmware (apps in `src/apps/`, flash swap in `src/flash/`)
 - `freeink-sdk/` — git submodule (`git submodule update --init` after clone)
 - `prompts/` — reusable AI-session prompts (safe-vibe-coding workflow)
