@@ -6,7 +6,8 @@
 // flashes it into the inactive OTA partition and reboots into it. This is the
 // "game console cartridge" flow — drop CrossPoint's firmware.bin (or any
 // other Xteink firmware built on this partition table) in /firmware and swap
-// back and forth; CrossPoint's own SD-update screen flashes InkPad back.
+// back and forth; CrossPoint's own SD-update screen flashes Cherith's
+// InkPad back.
 //
 // Interaction model: the bin list is selection-driven (UP/DOWN + CONFIRM in
 // tick(), scrolls past a screenful). The confirm step is a real dialog with

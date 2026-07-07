@@ -1,4 +1,4 @@
-Bug-hunt pass for InkPad firmware. Focus on component boundaries — that is
+Bug-hunt pass for Cherith's InkPad firmware. Focus on component boundaries — that is
 where LLM-written firmware breaks:
 
 1. Writer buffer ↔ cursor: every insert/delete path against cursor bounds,

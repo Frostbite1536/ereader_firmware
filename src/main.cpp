@@ -1,4 +1,5 @@
-// InkPad — Xteink X3/X4 word processor + flashcards + firmware-swap launcher.
+// Cherith's InkPad — Xteink X3/X4 word processor + flashcards +
+// firmware-swap launcher.
 // Boot order matters: X3/X4 fingerprint BEFORE SD and display bring-up, so
 // both read the right board profile (see freeink-sdk XteinkDetect docs).
 
@@ -14,6 +15,8 @@
 #include <XteinkDetect.h>
 
 #include "AppContext.h"
+#include "DarkModeTarget.h"
+#include "SdMount.h"
 #include "Settings.h"
 #include "apps/FlashcardsApp.h"
 #include "apps/FlasherApp.h"
@@ -44,7 +47,7 @@ App* current = nullptr;
 
 // Constructed in setup() once the display geometry is known.
 freeink::ui::DisplayTarget* rawTarget = nullptr;
-freeink::ui::InvertedDrawTarget* target = nullptr;
+DarkModeTarget* target = nullptr;
 UiApp* ui = nullptr;
 BatteryMonitor* battery = nullptr;
 AppContext* ctx = nullptr;
@@ -106,20 +109,24 @@ void setup() {
   // 2. Hardware bring-up.
   display.begin();
   input.begin();
-  if (!SdMan.begin()) {
-    Serial.println("[MAIN] SD mount failed");
-  } else {
-    SdMan.ensureDirectoryExists("/docs");
-    SdMan.ensureDirectoryExists("/decks");
-    SdMan.ensureDirectoryExists("/firmware");
+  // Mount + folder layout; apps retry via ensureSdMounted() when the card
+  // shows up later (a boot-only begin() left hot-inserted cards dead).
+  if (!ensureSdMounted()) {
+    Serial.println("[MAIN] SD mount failed (apps will retry on demand)");
   }
   battery = new BatteryMonitor();
 
-  // 3. UI runtime over the display's framebuffer (logical portrait).
+  // 3. UI runtime over the display's framebuffer. Orientation is baked into
+  // the target at construction; the Writer-menu toggle saves the setting and
+  // reboots into it. LandscapeCounterClockwise is the panel-native frame —
+  // if it reads upside down on the bench, switch to LandscapeClockwise here.
+  const freeink::ui::Orientation orient = SETTINGS.landscape
+                                              ? freeink::ui::Orientation::LandscapeCounterClockwise
+                                              : freeink::ui::Orientation::Portrait;
   rawTarget = new freeink::ui::DisplayTarget(display.getFrameBuffer(), display.getDisplayWidth(),
-                                             display.getDisplayHeight(), display.getDisplayWidthBytes());
+                                             display.getDisplayHeight(), display.getDisplayWidthBytes(), orient);
   fonts::installFonts(*rawTarget);
-  target = new freeink::ui::InvertedDrawTarget(*rawTarget, SETTINGS.darkMode);
+  target = new DarkModeTarget(*rawTarget, SETTINGS.darkMode);
   ui = new UiApp(*target, rawTarget->deviceContext());
   // Metric tokens derived from the body font's line height — the static
   // defaultThemeTokens() metrics assume ~18px fonts and clip subtitle rows.
@@ -136,14 +143,22 @@ void setup() {
   switchApp(start);
 
   lastActivityMs = millis();
-  Serial.printf("[MAIN] InkPad up on %s (%ux%u)\n", isX3 ? "X3" : "X4", display.getDisplayWidth(),
+  Serial.printf("[MAIN] Cherith's InkPad up on %s (%ux%u)\n", isX3 ? "X3" : "X4", display.getDisplayWidth(),
                 display.getDisplayHeight());
 }
 
 void loop() {
   input.update();
-  const InputSnapshot snap = freeink::ui::snapshotFrom(input);
-  const bool anyButton = snap.confirm || snap.back || snap.focusNext || snap.focusPrev || snap.prev || snap.next;
+  InputSnapshot snap = freeink::ui::snapshotFrom(input);
+  // Bottom-row LEFT/RIGHT mirror the side buttons (first-hardware-test
+  // feedback): folded into focus moves ONLY, never left as prev/next —
+  // route() dispatches the first InputPrev/InputNext interaction, which is
+  // the stray-press bug that once launched the Writer unasked. Apps that
+  // want LEFT/RIGHT (Flashcards cards) read the buttons raw in tick().
+  snap.focusPrev = snap.focusPrev || snap.prev;
+  snap.focusNext = snap.focusNext || snap.next;
+  snap.prev = snap.next = false;
+  const bool anyButton = snap.confirm || snap.back || snap.focusNext || snap.focusPrev;
   if (anyButton) lastActivityMs = millis();
 
   current->tick();  // BLE keys, app logic; may invalidate the UI or request a switch
@@ -173,6 +188,15 @@ void loop() {
   } else if (switched) {
     ui->render(InputSnapshot{});
     pushFrame(ui->lastRenderRefreshHint());
+  }
+
+  // Orientation toggle: reboot cleanly so setup() rebuilds the UI stack.
+  // onExit() first — the Writer saves dirty text there.
+  if (ctx->restartPending) {
+    Serial.println("[MAIN] restarting (orientation change)");
+    if (current) current->onExit();
+    SETTINGS.save();
+    ESP.restart();
   }
 
   // Sleep: launcher menu action, power button (guarded against the wake

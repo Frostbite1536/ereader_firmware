@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "../ButtonHints.h"
+#include "../SdMount.h"
 #include "../flash/FirmwareFlasher.h"
 #include "../fonts/WriterFonts.h"
 
@@ -45,6 +47,7 @@ void FlasherApp::onEnter() {
   binSel_ = 0;
   binTop_ = 0;
   flashQueued_ = false;
+  ensureSdMounted();  // card may have been inserted after boot
   scanBins();
   ctx_->ui.setScreen(&FlasherApp::drawScreen, this, RefreshHint::Full);
 }
@@ -67,11 +70,13 @@ void FlasherApp::tick() {
         return;
       }
       if (binCount_ == 0) return;
-      if (in.wasPressed(InputManager::BTN_DOWN) && binSel_ + 1 < binCount_) {
+      // Bottom-row LEFT/RIGHT mirror the side buttons in selection-driven lists.
+      if ((in.wasPressed(InputManager::BTN_DOWN) || in.wasPressed(InputManager::BTN_RIGHT)) &&
+          binSel_ + 1 < binCount_) {
         binSel_++;
         ui.invalidate(RefreshHint::Fast);
       }
-      if (in.wasPressed(InputManager::BTN_UP) && binSel_ > 0) {
+      if ((in.wasPressed(InputManager::BTN_UP) || in.wasPressed(InputManager::BTN_LEFT)) && binSel_ > 0) {
         binSel_--;
         ui.invalidate(RefreshHint::Fast);
       }
@@ -102,7 +107,9 @@ void FlasherApp::scanBins() {
   SdMan.ensureDirectoryExists("/firmware");
   for (const String& name : SdMan.listFiles("/firmware", MAX_BINS * 2)) {
     if (binCount_ >= MAX_BINS) break;
-    if (!name.endsWith(".bin")) continue;
+    if (!hasExtension(name, ".bin")) continue;  // case-insensitive: Windows ships .BIN too
+    // A truncated name can't round-trip through runFlash()'s path rebuild.
+    if (name.length() >= sizeof(binNames_[0])) continue;
     strlcpy(binNames_[binCount_], name.c_str(), sizeof(binNames_[0]));
     binCount_++;
   }
@@ -172,7 +179,8 @@ void FlasherApp::drawScreen(UiApp::ScreenType& screen, void* self) {
 
   if (f.mode_ == Mode::Confirm && f.chosen_ >= 0) {
     // Dialog only — the list stays un-registered so its rows can't take focus
-    // behind the dim, and LEFT/RIGHT can't reach the options (InputDefault).
+    // behind the dim. InputDefault keeps LEFT/RIGHT from DISPATCHING an
+    // option; as focus moves (folded in main.cpp) they only step Cancel/Flash.
     static const DialogOption options[2] = {
         {"Cancel", ACT_CANCEL},
         {"Flash + reboot", ACT_GO},
@@ -189,9 +197,15 @@ void FlasherApp::drawScreen(UiApp::ScreenType& screen, void* self) {
     return;
   }
 
+  drawButtonHints(screen, "Back", "Select", "Up", "Down");
+
   if (f.binCount_ == 0) {
     screen.spacer(24);
-    screen.popup("No .bin files found.\nCopy a firmware image (e.g.\nCrossPoint's firmware.bin) into\n/firmware on the SD card.");
+    if (!SdMan.ready()) {
+      screen.popup("No SD card detected.\nInsert a card, then re-open\nSwap firmware from the launcher.");
+    } else {
+      screen.popup("No .bin files found.\nCopy a firmware image (e.g.\nCrossPoint's firmware.bin) into\n/firmware on the SD card.");
+    }
     return;
   }
 

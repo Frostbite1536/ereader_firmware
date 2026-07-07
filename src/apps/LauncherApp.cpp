@@ -2,6 +2,8 @@
 
 #include <cstdio>
 
+#include "../ButtonHints.h"
+
 namespace {
 using namespace freeink::ui;
 
@@ -45,7 +47,8 @@ void LauncherApp::drawScreen(UiApp::ScreenType& screen, void* self) {
   screen.target().fill(l.ctx_->ui.device().screen(), Paint::solid(Color::White));
 
   snprintf(l.battery_, sizeof(l.battery_), "bat %u%%", l.ctx_->battery.readPercentage());
-  screen.header("InkPad", l.model_, l.battery_);
+  screen.header("Cherith's InkPad", l.model_, l.battery_);
+  drawButtonHints(screen, nullptr, "Select", "Up", "Down");  // BACK is idle at the root
 
   ListItem items[ROW_COUNT] = {};
   items[ROW_WRITER].label = "Writer";

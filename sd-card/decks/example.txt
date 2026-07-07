@@ -1,4 +1,4 @@
 What is the powerhouse of the cell?|Mitochondria
 What is the speed of light?|299,792 km/s
 Who developed the theory of relativity?|Albert Einstein
-Which keys refresh the InkPad writer screen?|Enter, Tab, and period
+Which keys refresh the writer screen in Cherith's InkPad?|Enter, Tab, and period

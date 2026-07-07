@@ -1,4 +1,4 @@
-You are working on InkPad, custom firmware for the Xteink X3/X4 e-readers
+You are working on Cherith's InkPad, custom firmware for the Xteink X3/X4 e-readers
 (ESP32-C3, e-paper). Before writing any code:
 
 1. Read CLAUDE.md, docs/HARDWARE.md, and docs/INVARIANTS.md.

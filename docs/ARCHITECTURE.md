@@ -13,15 +13,15 @@ hardware changed the shape:
   Flashcards, Launcher) are small enough to live in one image with instant
   switching — no reflash, no reboot.
 
-So InkPad is **one firmware** = launcher menu + Writer + Flashcards + SD
-flasher, built as a peer of CrossPoint:
+So Cherith's InkPad is **one firmware** = launcher menu + Writer +
+Flashcards + SD flasher, built as a peer of CrossPoint:
 
 ```
 SD card /firmware/*.bin
-   ┌─────────────────┐   flash + otadata flip   ┌──────────────────┐
-   │  CrossPoint      │ ───────────────────────▶ │  InkPad (this)   │
-   │  (reader)        │ ◀─────────────────────── │  Writer/Cards    │
-   └─────────────────┘                           └──────────────────┘
+   ┌─────────────────┐   flash + otadata flip   ┌────────────────────┐
+   │  CrossPoint      │ ───────────────────────▶ │  Cherith's InkPad  │
+   │  (reader)        │ ◀─────────────────────── │  (this firmware)   │
+   └─────────────────┘                           └────────────────────┘
         ota_0 / ota_1 — whichever is inactive receives the new image
 ```
 
