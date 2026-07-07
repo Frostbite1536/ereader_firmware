@@ -1,6 +1,6 @@
-# Testing InkPad from Linux Mint — the complete beginner's guide
+# Testing Cherith's InkPad from Linux Mint — the complete beginner's guide
 
-This walks you from a fresh Linux Mint computer to InkPad running on your
+This walks you from a fresh Linux Mint computer to Cherith's InkPad running on your
 Xteink X3 or X4, step by step, assuming you have never used PlatformIO or
 flashed a microcontroller before. Every command is meant to be copied and
 pasted exactly. Expect the whole thing to take 30–60 minutes, most of it
@@ -176,9 +176,9 @@ missing — go back to Step 1.
    writes the firmware (a minute or so), and reboots it. You'll see
    percentage progress, then `[SUCCESS]`.
 
-The screen will flash and settle on the **InkPad launcher**: a menu with
-Writer, Flashcards, Swap firmware, and Sleep, with the device model and
-battery percentage in the header. If the header says "Xteink X4" on an X4
+The screen will flash and settle on the launcher — the header reads
+**"Cherith's InkPad"** — a menu with Writer, Flashcards, Swap firmware, and
+Sleep, with the device model and battery percentage in the header. If the header says "Xteink X4" on an X4
 (or X3 on an X3), device auto-detection works — that's your first test
 passed.
 
@@ -190,14 +190,14 @@ pio device monitor -b 115200
 ```
 
 Press the device's power button briefly twice (sleep, wake) and you should
-see lines like `[MAIN] InkPad up on X4 (800x480)`. Exit the monitor with
+see lines like `[MAIN] Cherith's InkPad up on X4 (800x480)`. Exit the monitor with
 `Ctrl+C`. If you ever report a bug, a copy-paste of this output is gold.
 
 ---
 
 ## Step 5 — Prepare the SD card
 
-InkPad creates its folders (`/docs`, `/decks`, `/firmware`) on the card at
+Cherith's InkPad creates its folders (`/docs`, `/decks`, `/firmware`) on the card at
 boot, so a freshly formatted FAT32 card works as-is. To have something to
 test with, plug the card into the computer and copy:
 
@@ -247,9 +247,11 @@ This is the full smoke test (same list as `test/README.md`, expanded). Work
 through it in order; anything that misbehaves, note *exactly* what you did
 and what the screen and (if running) the serial monitor showed.
 
-1. **Launcher basics.** Battery % plausible? Model name right? DOWN moves
-   the highlight *visibly*. **LEFT and RIGHT must do nothing** — if a stray
-   LEFT/RIGHT press opens an app, that's a regression.
+1. **Launcher basics.** Battery % plausible? Model name right? Button
+   legend along the bottom edge? DOWN moves the highlight *visibly*, and
+   the right two bottom buttons (LEFT/RIGHT) move it too. **Neither may
+   ever open an app** — a press that activates a row is the old
+   stray-dispatch regression.
 2. **Refresh discipline.** In the Writer, type a full sentence without any
    trigger key: the panel must hold perfectly still. Then type `.` — one
    quick update. Every ~15th update is deliberately a slower full-screen
@@ -266,22 +268,35 @@ and what the screen and (if running) the serial monitor showed.
    physical power off if the device has one — on next boot the words must
    still be there (autosave on refresh + on sleep).
 5. **Menu round-trip.** BACK → menu → *Font size* cycles S/M/L/XL; *Dark
-   mode* inverts the whole screen; *Resume writing* returns; nothing loses
-   text.
-6. **Flashcards.** Launcher → Flashcards → `example` deck. DOWN shows the
+   mode* inverts the whole screen **and the selection highlight stays
+   clearly visible while you move it**; *Screen rotation* restarts the
+   device into landscape (and back) with your text intact — in landscape
+   the 11-row menu must scroll down to reach *Exit to launcher*; *Resume
+   writing* returns; nothing loses text.
+6. **Open document.** Writer menu → *New document*, type a line, then
+   *Open document*: both drafts are listed (alphabetically); pick the old
+   one and its text comes back. BACK from the picker returns to the menu.
+7. **Write a deck on the device.** In the Writer, type two or three
+   `question|answer` lines (e.g. `2+2?|4`). Menu → *Save folder*: the value
+   flips to `/decks` and the path in the menu header moves with it. Exit to
+   the launcher, open Flashcards — your file is there and works as a deck.
+   *Save folder* again moves it back to `/docs` and it disappears from
+   Flashcards.
+8. **Flashcards.** Launcher → Flashcards → `example` deck. DOWN shows the
    answer, DOWN again advances, UP goes back, BACK returns to the deck
    list. If you drop 12+ deck files in `/decks`, the list must scroll all
    the way to the last one.
-7. **Firmware swap** (if you copied CrossPoint's `firmware.bin`). Launcher
+9. **Firmware swap** (if you copied CrossPoint's `firmware.bin`). Launcher
    → *Swap firmware* → select the .bin → CONFIRM. In the dialog, the
    **first DOWN press must land on "Cancel"** (never on Flash), and
-   LEFT/RIGHT must do nothing. Select *Flash + reboot* with CONFIRM: a
+   LEFT/RIGHT may only move focus between the two options — never
+   activate one. Select *Flash + reboot* with CONFIRM: a
    percentage counts up over a minute or two — **don't power off** — then
    the device reboots into CrossPoint. To come back: CrossPoint →
-   Settings → *SD firmware update* → pick InkPad's `firmware.bin` (put
+   Settings → *SD firmware update* → pick the Cherith's InkPad `firmware.bin` (put
    `.pio/build/xteink/firmware.bin` from your build onto the card's
    `/firmware` folder first). Both directions must work.
-8. **Sleep and battery.** Launcher → Sleep: the device sleeps with your
+10. **Sleep and battery.** Launcher → Sleep: the device sleeps with your
    screen contents still showing. It also sleeps by itself after 15 idle
    minutes. Power button wakes it back into whatever app you were in.
 
@@ -313,6 +328,15 @@ The `freeink-sdk` submodule is missing or empty — Step 1's
 `pipx ensurepath`, then open a *new* terminal. Still nothing:
 `~/.local/bin/pio --version` and add `~/.local/bin` to your PATH.
 
+**Flashcards/Swap firmware says "No SD card detected" — or the `/docs`,
+`/decks`, `/firmware` folders never appear on the card.**
+The card didn't mount. It no longer has to be inserted before power-on
+(apps retry the mount every time you open them from the launcher, and the
+mount probe falls back to slower bus speeds), so: insert the card, go back
+to the launcher, and re-open the app. If it still fails, re-format the
+card FAT32 and check it's seated fully. Deck and firmware files are
+matched case-insensitively (`.txt`/`.TXT`, `.bin`/`.BIN`).
+
 **The keyboard never shows up in the pairing list.**
 Confirm it's actually in pairing mode (blinking light), and that it is a
 BLE keyboard (see "What you need"). Move it next to the device and press
@@ -339,16 +363,16 @@ the bug.
 
 Whatever state the device ends up in, you have two exits:
 
-1. **USB always works**: `pio run -e xteink -t upload` re-flashes InkPad
+1. **USB always works**: `pio run -e xteink -t upload` re-flashes Cherith's InkPad
    from the computer over the ROM bootloader.
 2. **CrossPoint's web installer** (<https://crosspointreader.com/>) flashes
    CrossPoint from a Chrome browser over the same USB port, no tools
-   needed — from there, its SD update screen can flash InkPad back.
+   needed — from there, its SD update screen can flash Cherith's InkPad back.
 
 Nothing you do while testing — including a failed or interrupted SD-card
 flash — changes the boot target unless the new image fully validated first,
 so a bad `.bin` on the card just shows a "Flash failed" message and keeps
-running InkPad.
+running Cherith's InkPad.
 
 ---
 

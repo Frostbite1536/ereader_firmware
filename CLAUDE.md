@@ -1,4 +1,4 @@
-# InkPad — team constitution
+# Cherith's InkPad — team constitution
 
 Custom firmware for the Xteink X3/X4: a distraction-free BLE-keyboard word
 processor ("Writer"), a flashcards app, and an SD-card firmware flasher so the

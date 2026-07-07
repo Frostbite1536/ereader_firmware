@@ -6,15 +6,17 @@
 #include <cstdio>
 #include <cstring>
 
+#include "../ButtonHints.h"
+#include "../SdMount.h"
 #include "../fonts/WriterFonts.h"
 
 namespace {
 using freeink::SpecialKey;
 using namespace freeink::ui;
 
-// ActionIds 10-29 (Writer range, CLAUDE.md).
+// ActionIds 10-29 (Writer range, CLAUDE.md). The menu and file picker are
+// selection-driven (tick() owns the buttons), so only pairing dispatches.
 enum : ActionId {
-  ACT_MENU_PICK = 10,
   ACT_PAIR_PICK = 11,
   ACT_PAIR_RESCAN = 12,
   ACT_PAIR_BACK = 13,
@@ -23,10 +25,13 @@ enum : ActionId {
 enum MenuRow : int16_t {
   ROW_RESUME = 0,
   ROW_SAVE,
+  ROW_OPEN,
   ROW_NEW,
+  ROW_FOLDER,
   ROW_PAIR,
   ROW_FONT,
   ROW_DARK,
+  ROW_ROTATE,
   ROW_AUTOSAVE,
   ROW_EXIT,
   ROW_COUNT,
@@ -41,52 +46,6 @@ constexpr size_t MAX_PAIR_ROWS = 8;
 
 void WriterApp::begin(AppContext& ctx) {
   ctx_ = &ctx;
-  ctx.ui.on(ACT_MENU_PICK, [](const ActionEvent& ev, void* self) {
-    auto& w = *static_cast<WriterApp*>(self);
-    auto& ui = w.ctx_->ui;
-    switch (ev.value) {
-      case ROW_RESUME:
-        w.mode_ = Mode::Editing;
-        ui.invalidate(RefreshHint::Fast);
-        break;
-      case ROW_SAVE:
-        strlcpy(w.toast_, w.save() ? "Saved" : "Save FAILED", sizeof(w.toast_));
-        w.mode_ = Mode::Editing;
-        ui.invalidate(RefreshHint::Fast);
-        break;
-      case ROW_NEW:
-        w.newDocument();
-        w.mode_ = Mode::Editing;
-        ui.invalidate(RefreshHint::Full);
-        break;
-      case ROW_PAIR:
-        w.mode_ = Mode::Pairing;
-        w.scanKicked_ = false;
-        w.pairMsg_[0] = 0;
-        ui.invalidate(RefreshHint::Fast);
-        break;
-      case ROW_FONT:
-        SETTINGS.fontSize = (SETTINGS.fontSize + 1) % 4;
-        SETTINGS.save();
-        ui.invalidate(RefreshHint::Fast);
-        break;
-      case ROW_DARK:
-        SETTINGS.darkMode = !SETTINGS.darkMode;
-        w.ctx_->target.setEnabled(SETTINGS.darkMode);
-        SETTINGS.save();
-        ui.invalidate(RefreshHint::Full);
-        break;
-      case ROW_AUTOSAVE:
-        SETTINGS.autosaveOnRefresh = !SETTINGS.autosaveOnRefresh;
-        SETTINGS.save();
-        ui.invalidate(RefreshHint::Fast);
-        break;
-      case ROW_EXIT:
-        w.ctx_->switchTo(APP_LAUNCHER);
-        break;
-    }
-  }, this);
-
   ctx.ui.on(ACT_PAIR_PICK, [](const ActionEvent& ev, void* self) {
     auto& w = *static_cast<WriterApp*>(self);
     if (ev.value >= 0 && ev.value < BleHid.deviceCount()) {
@@ -113,10 +72,11 @@ void WriterApp::begin(AppContext& ctx) {
 
 void WriterApp::onEnter() {
   mode_ = Mode::Editing;
+  ensureSdMounted();  // card may have been inserted after boot
   if (docPath_[0] == 0) loadLastDocument();
   // NimBLE bring-up requires full CPU frequency (INVARIANTS.md #12); we never
   // downclock, so this holds by construction.
-  BleHid.begin("InkPad");
+  BleHid.begin("Cherith's InkPad");
   lastConnected_ = BleHid.isConnected();
   ctx_->ui.setScreen(&WriterApp::drawScreen, this, RefreshHint::Full);
 }
@@ -151,16 +111,48 @@ void WriterApp::tick() {
     case Mode::Editing:
       if (in.wasPressed(InputManager::BTN_BACK)) {
         mode_ = Mode::Menu;
+        menuSel_ = 0;
+        menuTop_ = 0;
         ui.invalidate(RefreshHint::Fast);
       } else if (in.wasPressed(InputManager::BTN_CONFIRM)) {
         fast = true;  // no-keyboard way to force a redraw
       }
       break;
     case Mode::Menu:
+      // Selection-driven like the deck list (focus can't scroll, and 11 rows
+      // overflow a landscape page). LEFT/RIGHT mirror the side buttons.
       if (in.wasPressed(InputManager::BTN_BACK)) {
         mode_ = Mode::Editing;
         ui.invalidate(RefreshHint::Fast);
+        break;
       }
+      if ((in.wasPressed(InputManager::BTN_DOWN) || in.wasPressed(InputManager::BTN_RIGHT)) &&
+          menuSel_ + 1 < ROW_COUNT) {
+        menuSel_++;
+        ui.invalidate(RefreshHint::Fast);
+      }
+      if ((in.wasPressed(InputManager::BTN_UP) || in.wasPressed(InputManager::BTN_LEFT)) && menuSel_ > 0) {
+        menuSel_--;
+        ui.invalidate(RefreshHint::Fast);
+      }
+      if (in.wasPressed(InputManager::BTN_CONFIRM)) menuActivate(menuSel_);
+      break;
+    case Mode::FilePicker:
+      if (in.wasPressed(InputManager::BTN_BACK)) {
+        mode_ = Mode::Menu;
+        ui.invalidate(RefreshHint::Fast);
+        break;
+      }
+      if ((in.wasPressed(InputManager::BTN_DOWN) || in.wasPressed(InputManager::BTN_RIGHT)) &&
+          fileSel_ + 1 < fileCount_) {
+        fileSel_++;
+        ui.invalidate(RefreshHint::Fast);
+      }
+      if ((in.wasPressed(InputManager::BTN_UP) || in.wasPressed(InputManager::BTN_LEFT)) && fileSel_ > 0) {
+        fileSel_--;
+        ui.invalidate(RefreshHint::Fast);
+      }
+      if (in.wasPressed(InputManager::BTN_CONFIRM)) openPicked();
       break;
     case Mode::Pairing: {
       if (in.wasPressed(InputManager::BTN_BACK)) {
@@ -317,6 +309,78 @@ void WriterApp::triggerRefresh(bool& fast, bool& full) {
   }
 }
 
+// --- menu ------------------------------------------------------------------------
+
+void WriterApp::menuActivate(int16_t row) {
+  auto& ui = ctx_->ui;
+  switch (row) {
+    case ROW_RESUME:
+      mode_ = Mode::Editing;
+      ui.invalidate(RefreshHint::Fast);
+      break;
+    case ROW_SAVE:
+      strlcpy(toast_, save() ? "Saved" : "Save FAILED", sizeof(toast_));
+      mode_ = Mode::Editing;
+      ui.invalidate(RefreshHint::Fast);
+      break;
+    case ROW_OPEN:
+      scanFiles();
+      fileSel_ = 0;
+      fileTop_ = 0;
+      mode_ = Mode::FilePicker;
+      ui.invalidate(RefreshHint::Fast);
+      break;
+    case ROW_NEW:
+      newDocument();
+      mode_ = Mode::Editing;
+      ui.invalidate(RefreshHint::Full);
+      break;
+    case ROW_FOLDER: {
+      // "Type the cards in the Writer, then choose the folder": moving to
+      // /decks is what publishes a document to the Flashcards app.
+      const bool inDecks = strncmp(docPath_, "/decks/", 7) == 0;
+      const char* dest = inDecks ? "/docs" : "/decks";
+      if (moveToFolder(dest)) snprintf(toast_, sizeof(toast_), "Moved to %s", dest);
+      else strlcpy(toast_, "Move FAILED", sizeof(toast_));
+      // Stay in the menu: the row's value and the header path show the result.
+      ui.invalidate(RefreshHint::Fast);
+      break;
+    }
+    case ROW_PAIR:
+      mode_ = Mode::Pairing;
+      scanKicked_ = false;
+      pairMsg_[0] = 0;
+      ui.invalidate(RefreshHint::Fast);
+      break;
+    case ROW_FONT:
+      SETTINGS.fontSize = (SETTINGS.fontSize + 1) % 4;
+      SETTINGS.save();
+      ui.invalidate(RefreshHint::Fast);
+      break;
+    case ROW_DARK:
+      SETTINGS.darkMode = !SETTINGS.darkMode;
+      ctx_->target.setEnabled(SETTINGS.darkMode);
+      SETTINGS.save();
+      ui.invalidate(RefreshHint::Full);
+      break;
+    case ROW_ROTATE:
+      // Orientation is baked into the draw target at construction; the
+      // restart request reboots via onExit(), so dirty text saves first.
+      SETTINGS.landscape = !SETTINGS.landscape;
+      SETTINGS.save();
+      ctx_->requestRestart();
+      break;
+    case ROW_AUTOSAVE:
+      SETTINGS.autosaveOnRefresh = !SETTINGS.autosaveOnRefresh;
+      SETTINGS.save();
+      ui.invalidate(RefreshHint::Fast);
+      break;
+    case ROW_EXIT:
+      ctx_->switchTo(APP_LAUNCHER);
+      break;
+  }
+}
+
 // --- files ---------------------------------------------------------------------
 
 void WriterApp::allocDocPath() {
@@ -330,6 +394,9 @@ void WriterApp::allocDocPath() {
 }
 
 bool WriterApp::save() {
+  // Late-inserted card: try to mount before declaring failure. Throttled
+  // inside ensureSdMounted(), so a missing card can't stall the typing path.
+  if (!ensureSdMounted()) return false;
   if (docPath_[0] == 0) allocDocPath();
   // Atomic-enough save (INVARIANTS.md #5): full write to .tmp, then swap.
   char tmp[72];
@@ -349,7 +416,12 @@ bool WriterApp::save() {
 }
 
 void WriterApp::newDocument() {
-  saveIfDirty();
+  // Never wipe unsaved text (INVARIANTS.md #4): if the flush fails (no card),
+  // keep the buffer and the old document exactly as they were.
+  if (dirty_ && !save()) {
+    strlcpy(toast_, "Save FAILED - kept text", sizeof(toast_));
+    return;
+  }
   len_ = cursor_ = 0;
   topLine_ = 0;
   buf_[0] = 0;
@@ -360,17 +432,106 @@ void WriterApp::newDocument() {
   strlcpy(toast_, "New file", sizeof(toast_));
 }
 
+void WriterApp::loadDocument(const char* path) {
+  strlcpy(docPath_, path, sizeof(docPath_));
+  // readFileToBuffer reads at most CAP-1 bytes and NUL-terminates.
+  len_ = SdMan.readFileToBuffer(docPath_, buf_, CAP);
+  cursor_ = len_;
+  topLine_ = 0;  // first draw scrolls the window to the caret
+  dirty_ = false;
+  fastRefreshes_ = 0;
+  strlcpy(SETTINGS.lastDoc, docPath_, sizeof(SETTINGS.lastDoc));
+  SETTINGS.save();
+}
+
 void WriterApp::loadLastDocument() {
   if (SETTINGS.lastDoc[0] && SdMan.exists(SETTINGS.lastDoc)) {
-    strlcpy(docPath_, SETTINGS.lastDoc, sizeof(docPath_));
-    // readFileToBuffer reads at most CAP-1 bytes and NUL-terminates.
-    len_ = SdMan.readFileToBuffer(docPath_, buf_, CAP);
-    cursor_ = len_;
-    topLine_ = 0;  // first draw scrolls the window to the caret
-    dirty_ = false;
+    loadDocument(SETTINGS.lastDoc);
   } else {
     newDocument();
   }
+}
+
+// Move the current document between /docs and /decks — the same plain text
+// either way; /decks is simply where the Flashcards app looks. Write to the
+// new home first, delete the old copy only after that succeeded, so a failed
+// move can never lose the only copy (INVARIANTS.md #4/#5).
+bool WriterApp::moveToFolder(const char* dir) {
+  if (!ensureSdMounted()) return false;
+  if (docPath_[0] == 0) allocDocPath();
+  const char* base = strrchr(docPath_, '/');
+  base = base ? base + 1 : docPath_;
+  char newPath[sizeof(docPath_)];
+  snprintf(newPath, sizeof(newPath), "%s/%s", dir, base);
+  if (strcmp(newPath, docPath_) == 0) return true;  // already there
+  SdMan.ensureDirectoryExists(dir);
+  if (SdMan.exists(newPath)) {
+    // Name taken in the destination: fall back to the first free draft slot.
+    for (int i = 1; i <= 999; i++) {
+      snprintf(newPath, sizeof(newPath), "%s/draft-%03d.txt", dir, i);
+      if (!SdMan.exists(newPath)) break;
+    }
+  }
+  char oldPath[sizeof(docPath_)];
+  strlcpy(oldPath, docPath_, sizeof(oldPath));
+  strlcpy(docPath_, newPath, sizeof(docPath_));
+  if (!save()) {  // full atomic write at the new location
+    strlcpy(docPath_, oldPath, sizeof(docPath_));
+    return false;
+  }
+  if (SdMan.exists(oldPath)) SdMan.remove(oldPath);
+  strlcpy(SETTINGS.lastDoc, docPath_, sizeof(SETTINGS.lastDoc));
+  SETTINGS.save();
+  return true;
+}
+
+void WriterApp::scanFiles() {
+  fileCount_ = 0;
+  if (!ensureSdMounted()) return;
+  scanFolder("/docs", false);
+  scanFolder("/decks", true);
+}
+
+void WriterApp::scanFolder(const char* dir, bool deck) {
+  const int start = fileCount_;
+  SdMan.ensureDirectoryExists(dir);
+  for (const String& name : SdMan.listFiles(dir, MAX_FILES * 2)) {
+    if (fileCount_ >= MAX_FILES) break;
+    if (!hasExtension(name, ".txt")) continue;  // also skips leftover .tmp files
+    strlcpy(fileNames_[fileCount_], name.c_str(), sizeof(fileNames_[0]));
+    fileIsDeck_[fileCount_] = deck;
+    fileCount_++;
+  }
+  // Alphabetical within the folder (draft-NNN is zero-padded, so this is also
+  // creation order); FAT directory order is whatever the card felt like.
+  for (int i = start + 1; i < fileCount_; i++) {
+    char key[sizeof(fileNames_[0])];
+    strlcpy(key, fileNames_[i], sizeof(key));
+    int j = i;
+    while (j > start && strcmp(fileNames_[j - 1], key) > 0) {
+      memcpy(fileNames_[j], fileNames_[j - 1], sizeof(fileNames_[0]));
+      j--;
+    }
+    strlcpy(fileNames_[j], key, sizeof(fileNames_[0]));
+  }
+}
+
+void WriterApp::openPicked() {
+  if (fileSel_ < 0 || fileSel_ >= fileCount_) return;
+  // Flush the current document before its buffer is replaced (INVARIANTS.md
+  // #4); on failure stay on the old text rather than dropping it.
+  if (dirty_ && !save()) {
+    strlcpy(toast_, "Save FAILED - kept text", sizeof(toast_));
+    mode_ = Mode::Editing;
+    ctx_->ui.invalidate(RefreshHint::Full);
+    return;
+  }
+  char path[sizeof(docPath_)];
+  snprintf(path, sizeof(path), "%s/%s", fileIsDeck_[fileSel_] ? "/decks" : "/docs", fileNames_[fileSel_]);
+  loadDocument(path);
+  strlcpy(toast_, "Opened", sizeof(toast_));
+  mode_ = Mode::Editing;
+  ctx_->ui.invalidate(RefreshHint::Full);
 }
 
 // --- drawing ---------------------------------------------------------------------
@@ -382,6 +543,7 @@ void WriterApp::drawScreen(UiApp::ScreenType& screen, void* self) {
     case Mode::Editing: w.drawEditor(screen); break;
     case Mode::Menu: w.drawMenu(screen); break;
     case Mode::Pairing: w.drawPairing(screen); break;
+    case Mode::FilePicker: w.drawFilePicker(screen); break;
   }
 }
 
@@ -453,35 +615,92 @@ void WriterApp::drawEditor(UiApp::ScreenType& screen) {
 
 void WriterApp::drawMenu(UiApp::ScreenType& screen) {
   screen.header("Writer", docPath_);
+  drawButtonHints(screen, "Close", "Select", "Up", "Down");
 
   static char pairSub[48];
   if (BleHid.isConnected()) snprintf(pairSub, sizeof(pairSub), "connected: %s", BleHid.connectedName());
   else strlcpy(pairSub, "not connected", sizeof(pairSub));
 
+  const bool inDecks = strncmp(docPath_, "/decks/", 7) == 0;
+
   ListItem items[ROW_COUNT] = {};
   items[ROW_RESUME].label = "Resume writing";
   items[ROW_SAVE].label = "Save now";
+  items[ROW_OPEN].label = "Open document";
   items[ROW_NEW].label = "New document";
+  items[ROW_FOLDER].label = "Save folder";
+  items[ROW_FOLDER].value = inDecks ? "/decks" : "/docs";
   items[ROW_PAIR].label = "Keyboard pairing";
-  items[ROW_PAIR].subtitle = pairSub;
   items[ROW_FONT].label = "Font size";
   items[ROW_FONT].value = fonts::sizeName(SETTINGS.fontSize);
   items[ROW_DARK].label = "Dark mode";
   items[ROW_DARK].value = SETTINGS.darkMode ? "On" : "Off";
+  items[ROW_ROTATE].label = "Screen rotation";
+  items[ROW_ROTATE].value = SETTINGS.landscape ? "Landscape" : "Portrait";
   items[ROW_AUTOSAVE].label = "Autosave on refresh";
   items[ROW_AUTOSAVE].value = SETTINGS.autosaveOnRefresh ? "On" : "Off";
   items[ROW_EXIT].label = "Exit to launcher";
   for (int i = 0; i < ROW_COUNT; i++) items[i].actionValue = i;
 
+  // Selection-driven (tick() owns the buttons, NO_ACTION registers nothing):
+  // unlike the focus system this scrolls, so the menu can hold 11 rows even on
+  // a landscape screen that shows ~9.
+  int16_t rowH;
+  if (SETTINGS.landscape) {
+    // Compact single-line rows, no subtitles: more of the menu per screenful.
+    rowH = static_cast<int16_t>(screen.target().lineHeight(fonts::UI_BODY) + 12);
+  } else {
+    items[ROW_FOLDER].subtitle = "/decks files show up in Flashcards";
+    items[ROW_PAIR].subtitle = pairSub;
+    items[ROW_ROTATE].subtitle = "applies after a quick restart";
+    rowH = screen.theme().rowHeight;  // the subtitle-friendly theme metric
+  }
+  const uint16_t visible = listVisibleRows(screen.body(), rowH, 0);
+  menuTop_ = listTopIndexFor(menuSel_, menuTop_, visible, ROW_COUNT);
+
   ListProps lp;
   lp.items = items;
   lp.count = ROW_COUNT;
-  lp.selectedIndex = -1;
-  lp.action = ACT_MENU_PICK;
-  // No InputPrev/InputNext: route() would fire the FIRST such row on a stray
-  // LEFT/RIGHT press (the default list mask accepts them).
-  lp.inputMask = InputDefault;
-  lp.rowHeight = 0;  // 0 = inherit the theme metric (the default 36 clips subtitles)
+  lp.selectedIndex = menuSel_;
+  lp.topIndex = menuTop_;
+  lp.action = NO_ACTION;
+  lp.rowHeight = SETTINGS.landscape ? rowH : 0;  // 0 = inherit the theme metric
+  screen.list(lp);
+}
+
+void WriterApp::drawFilePicker(UiApp::ScreenType& screen) {
+  screen.header("Open document", "/docs and /decks on the SD card");
+  drawButtonHints(screen, "Back", "Open", "Up", "Down");
+
+  if (fileCount_ == 0) {
+    screen.spacer(24);
+    // Same honesty rule as the deck list: say WHY the list is empty.
+    if (!SdMan.ready()) {
+      screen.popup("No SD card detected.\nInsert a card, then re-open\nthis menu.");
+    } else {
+      screen.popup("No documents yet.\n\"New document\" starts one.");
+    }
+    return;
+  }
+
+  ListItem items[MAX_FILES] = {};
+  for (int i = 0; i < fileCount_; i++) {
+    items[i].label = fileNames_[i];
+    items[i].value = fileIsDeck_[i] ? "deck" : "";
+    items[i].actionValue = i;
+  }
+
+  // Selection-driven, same as the menu and the Flashcards deck list.
+  const uint16_t visible = listVisibleRows(screen.body(), screen.theme().rowHeight, 0);
+  fileTop_ = listTopIndexFor(fileSel_, fileTop_, visible, static_cast<uint16_t>(fileCount_));
+
+  ListProps lp;
+  lp.items = items;
+  lp.count = static_cast<uint16_t>(fileCount_);
+  lp.selectedIndex = fileSel_;
+  lp.topIndex = fileTop_;
+  lp.action = NO_ACTION;
+  lp.rowHeight = 0;  // inherit theme metric
   screen.list(lp);
 }
 
@@ -515,7 +734,9 @@ void WriterApp::drawPairing(UiApp::ScreenType& screen) {
     lp.count = count;
     lp.selectedIndex = -1;
     lp.action = ACT_PAIR_PICK;
-    lp.inputMask = InputDefault;  // see drawMenu — LEFT/RIGHT must stay inert
+    // No InputPrev/InputNext: route() would fire the FIRST such row on a
+    // stray LEFT/RIGHT press (the default list mask accepts them).
+    lp.inputMask = InputDefault;
     lp.rowHeight = 0;
     screen.list(lp);
   } else if (!pairMsg_[0]) {

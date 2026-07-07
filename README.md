@@ -1,4 +1,4 @@
-# InkPad
+# Cherith's InkPad
 
 Custom firmware for the **Xteink X3 and X4** e-readers: a distraction-free
 word processor driven by a Bluetooth keyboard, plus flashcards, in one
@@ -29,8 +29,11 @@ A digital typewriter, deliberately dumber than Notepad:
 - Four font sizes; swap in any TTF at build time via the SDK's `gen_font.py`
   (see `src/fonts/WriterFonts.h`).
 
-BACK button opens the menu (save / new / pairing / font size / dark mode /
-autosave / exit). Physical navigation: UP/DOWN + CONFIRM.
+BACK button opens the menu (save / open / new / save folder / pairing / font
+size / dark mode / rotation / autosave / exit). Physical navigation: UP/DOWN +
+CONFIRM. *Open document* lists everything in `/docs` and `/decks`; *Save
+folder* moves the current document between the two — a document in `/decks` is
+a flashcard deck.
 
 ## Flashcards
 
@@ -43,13 +46,18 @@ Speed of light?|299,792 km/s
 
 DOWN flips and advances, UP goes back, BACK returns to the deck list.
 
+No computer needed: type the cards in the Writer (same `question|answer`
+lines) and set the menu's *Save folder* to `/decks` — the deck appears in
+Flashcards immediately.
+
 ## Firmware swap ("Swap firmware" in the launcher)
 
 Copy another Xteink firmware image (e.g. CrossPoint's `firmware.bin`) into
 `/firmware` on the SD card, pick it, confirm. The image is fully validated
 (magic, segments, checksum, SHA-256), streamed into the inactive OTA slot,
-and booted. CrossPoint's own *Settings → SD firmware update* flashes InkPad
-back the same way — the partition table is identical by design.
+and booted. CrossPoint's own *Settings → SD firmware update* flashes
+Cherith's InkPad back the same way — the partition table is identical by
+design.
 
 ## Building
 

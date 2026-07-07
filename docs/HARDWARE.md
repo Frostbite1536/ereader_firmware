@@ -38,6 +38,14 @@ treated as an X4.
 The ladder decodes to six logical buttons (BACK, CONFIRM, LEFT, RIGHT, UP,
 DOWN) plus POWER — all handled by the SDK's `InputManager`.
 
+Physical layout (first X4 hardware test, 2026-07): the bottom bezel row is,
+left to right, **BACK, CONFIRM, then the two buttons the ladder reports as
+LEFT and RIGHT**; UP and DOWN are the side buttons. Which of the right two is
+LEFT vs RIGHT is **not yet bench-verified** — the firmware maps both onto
+focus/selection moves (LEFT=up, RIGHT=down), so a swap would show up as the
+right two buttons scrolling in the opposite direction of their on-screen
+labels (and as swapped Prev/Next in the Flashcards card view).
+
 ## Partition table (16 MB, CrossPoint-compatible)
 
 ```

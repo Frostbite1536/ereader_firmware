@@ -16,6 +16,7 @@ void Settings::load() {
   autosaveOnRefresh = prefs.getBool("autoRefSave", autosaveOnRefresh);
   fullRefreshEvery = prefs.getUChar("fullEvery", fullRefreshEvery);
   lastApp = prefs.getUChar("lastApp", lastApp);
+  landscape = prefs.getBool("landscape", landscape);
   String doc = prefs.getString("lastDoc", "");
   strlcpy(lastDoc, doc.c_str(), sizeof(lastDoc));
   prefs.end();
@@ -31,6 +32,7 @@ void Settings::save() const {
   prefs.putBool("autoRefSave", autosaveOnRefresh);
   prefs.putUChar("fullEvery", fullRefreshEvery);
   prefs.putUChar("lastApp", lastApp);
+  prefs.putBool("landscape", landscape);
   prefs.putString("lastDoc", lastDoc);
   prefs.end();
 }

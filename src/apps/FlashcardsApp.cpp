@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "../ButtonHints.h"
+#include "../SdMount.h"
 #include "../fonts/WriterFonts.h"
 
 namespace {
@@ -17,6 +19,7 @@ void FlashcardsApp::begin(AppContext& ctx) { ctx_ = &ctx; }
 
 void FlashcardsApp::onEnter() {
   mode_ = Mode::DeckList;
+  ensureSdMounted();  // card may have been inserted after boot
   scanDecks();
   deckSel_ = 0;
   deckTop_ = 0;
@@ -33,11 +36,13 @@ void FlashcardsApp::tick() {
       return;
     }
     if (deckCount_ == 0) return;
-    if (in.wasPressed(InputManager::BTN_DOWN) && deckSel_ + 1 < deckCount_) {
+    // Bottom-row LEFT/RIGHT mirror the side buttons in selection-driven lists.
+    if ((in.wasPressed(InputManager::BTN_DOWN) || in.wasPressed(InputManager::BTN_RIGHT)) &&
+        deckSel_ + 1 < deckCount_) {
       deckSel_++;
       ui.invalidate(RefreshHint::Fast);
     }
-    if (in.wasPressed(InputManager::BTN_UP) && deckSel_ > 0) {
+    if ((in.wasPressed(InputManager::BTN_UP) || in.wasPressed(InputManager::BTN_LEFT)) && deckSel_ > 0) {
       deckSel_--;
       ui.invalidate(RefreshHint::Fast);
     }
@@ -75,7 +80,7 @@ void FlashcardsApp::scanDecks() {
   SdMan.ensureDirectoryExists("/decks");
   for (const String& name : SdMan.listFiles("/decks", MAX_DECKS * 2)) {
     if (deckCount_ >= MAX_DECKS) break;
-    if (!name.endsWith(".txt")) continue;
+    if (!hasExtension(name, ".txt")) continue;  // case-insensitive: Windows ships .TXT too
     strlcpy(deckNames_[deckCount_], name.c_str(), sizeof(deckNames_[0]));
     deckCount_++;
   }
@@ -119,10 +124,17 @@ void FlashcardsApp::drawScreen(UiApp::ScreenType& screen, void* self) {
 }
 
 void FlashcardsApp::drawDeckList(UiApp::ScreenType& screen) {
-  screen.header("Flashcards", "UP/DOWN pick a deck, CONFIRM opens");
+  screen.header("Flashcards", "decks from /decks on the SD card");
+  drawButtonHints(screen, "Back", "Open", "Up", "Down");
   if (deckCount_ == 0) {
     screen.spacer(24);
-    screen.popup("No decks found.\nAdd /decks/<name>.txt with one\nquestion|answer per line.");
+    // Tell the truth about WHY the list is empty — "add files" advice on an
+    // unmounted card sent the first tester in circles.
+    if (!SdMan.ready()) {
+      screen.popup("No SD card detected.\nInsert a card, then re-open\nFlashcards from the launcher.");
+    } else {
+      screen.popup("No decks found.\nType cards in the Writer (one\nquestion|answer per line), then\nset its Save folder to /decks.");
+    }
     return;
   }
   ListItem items[MAX_DECKS] = {};
@@ -151,12 +163,8 @@ void FlashcardsApp::drawCard(UiApp::ScreenType& screen) {
   snprintf(header_, sizeof(header_), "Card %d/%d", cardIndex_ + 1, cardCount_);
   screen.header("Flashcards", header_, showingFront_ ? "Q" : "A");
 
-  StatusBarProps bar;
-  bar.leading = showingFront_ ? "DOWN: show answer" : "DOWN: next card";
-  bar.trailing = "UP: prev  BACK: decks";
-  bar.text.font = fonts::UI_SMALL;
-  bar.fillBackground = true;
-  screen.status(bar, LayoutAnchor::Bottom);
+  const char* flipOrNext = showingFront_ ? "Answer" : "Next";
+  drawButtonHints(screen, "Decks", flipOrNext, "Prev", flipOrNext);
 
   screen.insetContent(Insets{16, 14, 12, 14});
   const Rect body = screen.body();

@@ -14,6 +14,7 @@ struct Settings {
 
   // System
   uint8_t lastApp = 0;              // AppId to resume into after wake
+  bool landscape = false;           // UI orientation; baked in at boot (toggle restarts)
 
   void load();
   void save() const;
