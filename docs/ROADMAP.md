@@ -68,3 +68,13 @@
 - No on-device rename: a draft moved to `/decks` keeps its `draft-NNN.txt`
   name in the Flashcards list. Rename on a PC, or wait for a text-input
   screen (candidate for v0.2 — the BLE keyboard is right there).
+- List screens skip filenames too long for their fixed slots (39 chars for
+  docs/decks, 47 for .bins) — a truncated name couldn't be opened anyway.
+  At 999 drafts in a folder the Writer refuses new files/moves instead of
+  overwriting `draft-999.txt`.
+- If the device goes to sleep (power button or idle) while the SD card is
+  missing AND there is unsaved text, that text is lost — deep sleep powers
+  down RAM and the save has nowhere to go. The Writer refuses *menu*
+  actions that would drop text (new/open/rotate) on a failed save, but
+  sleep cannot be refused indefinitely. Keep a card in the slot while
+  writing.

@@ -51,9 +51,9 @@ class WriterApp : public App {
   // --- files -----------------------------------------------------------------
   bool save();
   void newDocument();
-  void loadDocument(const char* path);
+  bool loadDocument(const char* path);
   void loadLastDocument();
-  void allocDocPath();
+  bool allocDocPath();
   bool moveToFolder(const char* dir);
   void scanFiles();
   void scanFolder(const char* dir, bool deck);

@@ -81,6 +81,8 @@ void FlashcardsApp::scanDecks() {
   for (const String& name : SdMan.listFiles("/decks", MAX_DECKS * 2)) {
     if (deckCount_ >= MAX_DECKS) break;
     if (!hasExtension(name, ".txt")) continue;  // case-insensitive: Windows ships .TXT too
+    // A truncated name can't round-trip through loadDeck()'s path rebuild.
+    if (name.length() >= sizeof(deckNames_[0])) continue;
     strlcpy(deckNames_[deckCount_], name.c_str(), sizeof(deckNames_[0]));
     deckCount_++;
   }

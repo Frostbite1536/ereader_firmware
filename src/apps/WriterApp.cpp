@@ -364,8 +364,16 @@ void WriterApp::menuActivate(int16_t row) {
       ui.invalidate(RefreshHint::Full);
       break;
     case ROW_ROTATE:
-      // Orientation is baked into the draw target at construction; the
-      // restart request reboots via onExit(), so dirty text saves first.
+      // Orientation is baked into the draw target at construction, so this
+      // reboots — which wipes the RAM buffer. Refuse until the text is safely
+      // on card (INVARIANTS.md #4): onExit()'s save-if-dirty runs before the
+      // restart, but a failure there could not stop the reboot.
+      if (dirty_ && !save()) {
+        strlcpy(toast_, "Save FAILED - kept text", sizeof(toast_));
+        mode_ = Mode::Editing;
+        ui.invalidate(RefreshHint::Full);
+        break;
+      }
       SETTINGS.landscape = !SETTINGS.landscape;
       SETTINGS.save();
       ctx_->requestRestart();
@@ -383,21 +391,27 @@ void WriterApp::menuActivate(int16_t row) {
 
 // --- files ---------------------------------------------------------------------
 
-void WriterApp::allocDocPath() {
+bool WriterApp::allocDocPath() {
   SdMan.ensureDirectoryExists("/docs");
   for (int i = 1; i <= 999; i++) {
     snprintf(docPath_, sizeof(docPath_), "/docs/draft-%03d.txt", i);
-    if (!SdMan.exists(docPath_)) break;
+    if (!SdMan.exists(docPath_)) {
+      strlcpy(SETTINGS.lastDoc, docPath_, sizeof(SETTINGS.lastDoc));
+      SETTINGS.save();
+      return true;
+    }
   }
-  strlcpy(SETTINGS.lastDoc, docPath_, sizeof(SETTINGS.lastDoc));
-  SETTINGS.save();
+  // All 999 slots taken: refuse rather than silently overwrite draft-999
+  // (INVARIANTS.md #4).
+  docPath_[0] = 0;
+  return false;
 }
 
 bool WriterApp::save() {
   // Late-inserted card: try to mount before declaring failure. Throttled
   // inside ensureSdMounted(), so a missing card can't stall the typing path.
   if (!ensureSdMounted()) return false;
-  if (docPath_[0] == 0) allocDocPath();
+  if (docPath_[0] == 0 && !allocDocPath()) return false;
   // Atomic-enough save (INVARIANTS.md #5): full write to .tmp, then swap.
   char tmp[72];
   snprintf(tmp, sizeof(tmp), "%s.tmp", docPath_);
@@ -422,34 +436,54 @@ void WriterApp::newDocument() {
     strlcpy(toast_, "Save FAILED - kept text", sizeof(toast_));
     return;
   }
+  // Allocate the new name BEFORE wiping, so a full /docs leaves the current
+  // document untouched.
+  char oldPath[sizeof(docPath_)];
+  strlcpy(oldPath, docPath_, sizeof(oldPath));
+  docPath_[0] = 0;
+  if (!allocDocPath()) {
+    strlcpy(docPath_, oldPath, sizeof(docPath_));
+    strlcpy(toast_, "No free draft name", sizeof(toast_));
+    return;
+  }
   len_ = cursor_ = 0;
   topLine_ = 0;
   buf_[0] = 0;
   fastRefreshes_ = 0;
-  docPath_[0] = 0;
-  allocDocPath();
   save();  // reserve the name on card immediately
   strlcpy(toast_, "New file", sizeof(toast_));
 }
 
-void WriterApp::loadDocument(const char* path) {
+bool WriterApp::loadDocument(const char* path) {
+  if (!ensureSdMounted()) return false;
+  FsFile f = SdMan.open(path);
+  if (!f) return false;
+  const size_t size = static_cast<size_t>(f.fileSize());
+  f.close();
+  // readFileToBuffer reads at most CAP-1 bytes and NUL-terminates. A short
+  // read (SD hiccup, file vanished under us) must not masquerade as a clean
+  // document: a later autosave would replace the real file with the stub. So
+  // only adopt the path once the buffer holds everything we expected.
+  const size_t want = size < CAP - 1 ? size : CAP - 1;
+  len_ = SdMan.readFileToBuffer(path, buf_, CAP);
+  if (len_ != want) {
+    len_ = cursor_ = 0;  // buffer is clobbered either way; leave it empty+clean
+    buf_[0] = 0;
+    dirty_ = false;
+    return false;
+  }
   strlcpy(docPath_, path, sizeof(docPath_));
-  // readFileToBuffer reads at most CAP-1 bytes and NUL-terminates.
-  len_ = SdMan.readFileToBuffer(docPath_, buf_, CAP);
   cursor_ = len_;
   topLine_ = 0;  // first draw scrolls the window to the caret
   dirty_ = false;
   fastRefreshes_ = 0;
   strlcpy(SETTINGS.lastDoc, docPath_, sizeof(SETTINGS.lastDoc));
   SETTINGS.save();
+  return true;
 }
 
 void WriterApp::loadLastDocument() {
-  if (SETTINGS.lastDoc[0] && SdMan.exists(SETTINGS.lastDoc)) {
-    loadDocument(SETTINGS.lastDoc);
-  } else {
-    newDocument();
-  }
+  if (!(SETTINGS.lastDoc[0] && loadDocument(SETTINGS.lastDoc))) newDocument();
 }
 
 // Move the current document between /docs and /decks — the same plain text
@@ -467,10 +501,15 @@ bool WriterApp::moveToFolder(const char* dir) {
   SdMan.ensureDirectoryExists(dir);
   if (SdMan.exists(newPath)) {
     // Name taken in the destination: fall back to the first free draft slot.
+    bool found = false;
     for (int i = 1; i <= 999; i++) {
       snprintf(newPath, sizeof(newPath), "%s/draft-%03d.txt", dir, i);
-      if (!SdMan.exists(newPath)) break;
+      if (!SdMan.exists(newPath)) {
+        found = true;
+        break;
+      }
     }
+    if (!found) return false;  // destination full — never overwrite (INVARIANTS.md #4)
   }
   char oldPath[sizeof(docPath_)];
   strlcpy(oldPath, docPath_, sizeof(oldPath));
@@ -498,6 +537,9 @@ void WriterApp::scanFolder(const char* dir, bool deck) {
   for (const String& name : SdMan.listFiles(dir, MAX_FILES * 2)) {
     if (fileCount_ >= MAX_FILES) break;
     if (!hasExtension(name, ".txt")) continue;  // also skips leftover .tmp files
+    // A name that would truncate can't round-trip through openPicked() — the
+    // rebuilt path would point at a different (or no) file. Leave it out.
+    if (name.length() >= sizeof(fileNames_[0])) continue;
     strlcpy(fileNames_[fileCount_], name.c_str(), sizeof(fileNames_[0]));
     fileIsDeck_[fileCount_] = deck;
     fileCount_++;
@@ -526,10 +568,18 @@ void WriterApp::openPicked() {
     ctx_->ui.invalidate(RefreshHint::Full);
     return;
   }
+  char prev[sizeof(docPath_)];
+  strlcpy(prev, docPath_, sizeof(prev));
   char path[sizeof(docPath_)];
   snprintf(path, sizeof(path), "%s/%s", fileIsDeck_[fileSel_] ? "/decks" : "/docs", fileNames_[fileSel_]);
-  loadDocument(path);
-  strlcpy(toast_, "Opened", sizeof(toast_));
+  if (loadDocument(path)) {
+    strlcpy(toast_, "Opened", sizeof(toast_));
+  } else {
+    // Target unreadable (and the buffer clobbered by the attempt): fall back
+    // to the document we just flushed, or a fresh one if even that is gone.
+    if (!loadDocument(prev)) newDocument();
+    strlcpy(toast_, "Open FAILED", sizeof(toast_));
+  }
   mode_ = Mode::Editing;
   ctx_->ui.invalidate(RefreshHint::Full);
 }

@@ -108,6 +108,8 @@ void FlasherApp::scanBins() {
   for (const String& name : SdMan.listFiles("/firmware", MAX_BINS * 2)) {
     if (binCount_ >= MAX_BINS) break;
     if (!hasExtension(name, ".bin")) continue;  // case-insensitive: Windows ships .BIN too
+    // A truncated name can't round-trip through runFlash()'s path rebuild.
+    if (name.length() >= sizeof(binNames_[0])) continue;
     strlcpy(binNames_[binCount_], name.c_str(), sizeof(binNames_[0]));
     binCount_++;
   }
