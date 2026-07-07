@@ -1,0 +1,6 @@
+The NotoSans*Font.h headers in this directory are bitmap rasterizations of
+Noto Sans Regular, generated with freeink-sdk/libs/ui/FreeInkUI/tools/gen_font.py.
+
+Noto Sans is Copyright the Noto Project Authors
+(https://github.com/notofonts/latin-greek-cyrillic) and licensed under the
+SIL Open Font License, Version 1.1: https://openfontlicense.org

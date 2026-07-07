@@ -1,0 +1,15 @@
+You are working on InkPad, custom firmware for the Xteink X3/X4 e-readers
+(ESP32-C3, e-paper). Before writing any code:
+
+1. Read CLAUDE.md, docs/HARDWARE.md, and docs/INVARIANTS.md.
+2. Hardware facts come ONLY from docs/HARDWARE.md or
+   freeink-sdk/libs/hardware/BoardConfig/include/BoardConfig.h.
+3. The freeink-sdk submodule is read-only.
+
+Style: boring, fixed-capacity, allocation-free hot paths. Match the FreeInk
+SDK idiom. One app per file pair under src/apps/. ActionId ranges per app are
+listed in CLAUDE.md.
+
+Definition of done: `pio run -e xteink` compiles clean; every touched
+invariant re-checked against docs/INVARIANTS.md; docs updated if behavior
+changed; state explicitly what still needs on-device verification.

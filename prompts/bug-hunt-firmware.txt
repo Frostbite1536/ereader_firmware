@@ -1,0 +1,19 @@
+Bug-hunt pass for InkPad firmware. Focus on component boundaries — that is
+where LLM-written firmware breaks:
+
+1. Writer buffer ↔ cursor: every insert/delete path against cursor bounds,
+   buffer-full behavior, the render-copy cursor insertion. Off-by-ones at
+   position 0, at len, at capacity.
+2. Refresh policy ↔ INVARIANTS.md: can any plain keystroke reach
+   displayBuffer()? Is the Nth-refresh FULL promotion still wired?
+3. Save path: dirty-flag set on EVERY mutation? tmp+rename intact? All three
+   save triggers (manual, sleep, autosave-on-refresh) reaching the same code?
+4. Flasher: validation before otadata in every entry point; failure paths
+   leave otadata untouched; progress callback can't divide by zero.
+5. SD/display shared SPI bus: no SD I/O between a refresh kickoff and its
+   BUSY completion.
+6. BLE: popKey drained fully per tick; poll() called every loop while
+   connected; begin/end at full CPU frequency.
+
+Report findings as file:line + failure scenario. Verify against the code
+before reporting — no speculative findings.
