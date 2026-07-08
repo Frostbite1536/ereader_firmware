@@ -10,6 +10,7 @@ struct Settings {
   bool darkMode = false;            // white-on-black via InvertedDrawTarget
   bool autosaveOnRefresh = true;    // save on every trigger-key refresh
   uint8_t fullRefreshEvery = 15;    // promote every Nth fast refresh to FULL
+  uint8_t refreshEveryChars = 50;   // typed-char refresh budget; 0 = trigger keys only
   char lastDoc[64] = {0};           // resume target, e.g. "/docs/draft-003.txt"
 
   // System

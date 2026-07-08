@@ -43,6 +43,7 @@ class WriterApp : public App {
 
   // --- editing ---------------------------------------------------------------
   void handleKey(const freeink::KeyEvent& ev, bool& fast, bool& full);
+  void handleMenuKey(const freeink::KeyEvent& ev);  // arrows/Enter/Esc in non-editing modes
   bool insertChar(char c);
   void backspace();
   void deleteForward();
@@ -79,6 +80,7 @@ class WriterApp : public App {
   char docPath_[64] = {0};
   bool dirty_ = false;
   uint16_t fastRefreshes_ = 0;  // since the last full refresh
+  uint16_t charsSinceRefresh_ = 0;  // typed-char refresh budget (Settings.refreshEveryChars)
   char toast_[24] = {0};        // one-shot status-bar note ("Saved", ...)
 
   // menu + file-picker selection (selection-driven lists, moved in tick())

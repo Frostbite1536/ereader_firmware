@@ -85,12 +85,33 @@ bool serviceAppSwitch() {
   return true;
 }
 
+// The panel keeps its last frame through deep sleep, so without repainting, a
+// sleeping device is indistinguishable from a frozen one (tester request).
+// Drawn through the dark-mode wrapper so the card matches the user's theme.
+void drawSleepScreen() {
+  using namespace freeink::ui;
+  const DeviceContext dev = rawTarget->deviceContext();
+  target->fill(Rect{0, 0, dev.width, dev.height}, Paint::solid(Color::White));
+  const int16_t titleH = target->lineHeight(fonts::UI_TITLE);
+  const int16_t bodyH = target->lineHeight(fonts::UI_BODY);
+  TextStyle title;
+  title.font = fonts::UI_TITLE;
+  title.align = TextAlign::Center;
+  title.bold = true;
+  const int16_t y = static_cast<int16_t>(dev.height / 2 - titleH);
+  target->text(Rect{0, y, dev.width, titleH}, "Asleep", title);
+  TextStyle body;
+  body.font = fonts::UI_BODY;
+  body.align = TextAlign::Center;
+  target->text(Rect{0, static_cast<int16_t>(y + titleH + bodyH / 2), dev.width, bodyH}, "Press POWER to wake", body);
+  ctx->refresh(EInkDisplay::FULL_REFRESH);
+}
+
 [[noreturn]] void goToSleep() {
   Serial.println("[MAIN] sleeping");
   if (current) current->onExit();  // Writer saves here — autosave-on-sleep invariant
   SETTINGS.save();
-  // The panel retains the last frame through deep sleep, so the user's text
-  // stays visible on the "off" device.
+  drawSleepScreen();
   display.deepSleep();
   freeink::PowerManager::deepSleepUntilPowerButton();
 }
@@ -130,8 +151,15 @@ void setup() {
   ui = new UiApp(*target, rawTarget->deviceContext());
   // Metric tokens derived from the body font's line height — the static
   // defaultThemeTokens() metrics assume ~18px fonts and clip subtitle rows.
-  ui->setTheme(freeink::ui::themeTokensForLineHeight(rawTarget->lineHeight(fonts::UI_BODY), fonts::UI_SMALL,
-                                                     fonts::UI_BODY, fonts::UI_TITLE));
+  freeink::ui::ThemeTokens tokens = freeink::ui::themeTokensForLineHeight(
+      rawTarget->lineHeight(fonts::UI_BODY), fonts::UI_SMALL, fonts::UI_BODY, fonts::UI_TITLE);
+  // One highlight everywhere: the SDK styles FOCUSED rows (launcher, pairing)
+  // with a gray dither but SELECTED rows (Writer menu, pickers) with a solid
+  // bar — visibly inconsistent, worst in dark mode (first K250 test round).
+  // The solid bar is the readable one on e-ink in both modes, so focus gets it
+  // too.
+  tokens.listRow.focused = tokens.listRow.selected;
+  ui->setTheme(tokens);
 
   ctx = new AppContext{display, *target, *ui, input, *battery};
 
@@ -164,9 +192,21 @@ void loop() {
   current->tick();  // BLE keys, app logic; may invalidate the UI or request a switch
   if (ctx->lastActivityMs > lastActivityMs) lastActivityMs = ctx->lastActivityMs;
 
+  // Keyboard menu navigation: fold the one-shot flags apps set in tick() into
+  // this pass's snapshot so focus-driven screens see them as button presses.
+  const bool kbNav = ctx->kbFocusNext || ctx->kbFocusPrev || ctx->kbConfirm || ctx->kbBack;
+  if (kbNav) {
+    snap.focusNext = snap.focusNext || ctx->kbFocusNext;
+    snap.focusPrev = snap.focusPrev || ctx->kbFocusPrev;
+    snap.confirm = snap.confirm || ctx->kbConfirm;
+    snap.back = snap.back || ctx->kbBack;
+    ctx->kbFocusNext = ctx->kbFocusPrev = ctx->kbConfirm = ctx->kbBack = false;
+    lastActivityMs = millis();
+  }
+
   bool switched = serviceAppSwitch();
 
-  if (ui->invalidated() || anyButton) {
+  if (ui->invalidated() || anyButton || kbNav) {
     ui->render(snap);
     RefreshHint hint = ui->lastRenderRefreshHint();
 
