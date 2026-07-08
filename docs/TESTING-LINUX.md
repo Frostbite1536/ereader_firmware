@@ -261,8 +261,9 @@ and what the screen and (if running) the serial monitor showed.
    every line rendered. Hold the ← arrow (or Home + ↑) to walk the caret
    back up: the view must scroll back up too. *(This exercises the newly
    rewritten canvas — the old one silently stopped at 16 lines.)*
-4. **Nothing lost on power-cut.** Mid-sentence, press the power button
-   (device sleeps — your text stays visible on the panel, that's e-ink).
+4. **Nothing lost on power-cut.** Mid-sentence, press the power button —
+   the device saves, shows the "Asleep — press POWER to wake" card, and
+   sleeps (the card tells a sleeping device apart from a frozen one).
    Press power again to wake: the Writer resumes with the same text. Now
    the harsher version: type a few words, wait a beat, and hold/slide the
    physical power off if the device has one — on next boot the words must
@@ -296,8 +297,8 @@ and what the screen and (if running) the serial monitor showed.
    Settings → *SD firmware update* → pick the Cherith's InkPad `firmware.bin` (put
    `.pio/build/xteink/firmware.bin` from your build onto the card's
    `/firmware` folder first). Both directions must work.
-10. **Sleep and battery.** Launcher → Sleep: the device sleeps with your
-   screen contents still showing. It also sleeps by itself after 15 idle
+10. **Sleep and battery.** Launcher → Sleep: the device saves, paints the
+   "Asleep" card, and sleeps. It also sleeps by itself after 15 idle
    minutes. Power button wakes it back into whatever app you were in.
 
 ---

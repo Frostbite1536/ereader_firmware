@@ -56,6 +56,19 @@
   returns false (rejects all peripheral conn-param requests); some keyboards
   drop the link when their update is rejected — not overridable from our
   layer, needs an SDK knob.
+- **`BleKeyboardHost` doubles letters on rollover typing.** The generic
+  page-turner fallback in `onReportIngest` runs whenever a keyboard-shaped
+  report emits no NEW key and the report map has a consumer page (all modern
+  keyboards: media keys) — so a rollover release frame re-emits the still-held
+  key ("the" → "tthhe", confirmed on the K250). Upstream fix is one line:
+  skip the fallback for keyboard-shaped reports when the map has a keyboard
+  page. Workaround: `src/BleKeyFilter.h` re-subscribes the input reports with
+  a filter that forwards only newly-pressed keys.
+- **Keyboard navigation outside the Writer.** The Writer's menus, picker, and
+  pairing screens are keyboard-drivable (AppContext kb* snapshot flags). The
+  launcher/Flashcards/Flasher are not, because `BleHid` only runs inside the
+  Writer (RAM: NimBLE is torn down on exit). System-wide keyboard nav needs a
+  deliberate BLE lifetime redesign first.
 
 ## Known v0.1 limitations
 

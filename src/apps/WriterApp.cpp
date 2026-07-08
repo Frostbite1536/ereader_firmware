@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "../BleCompat.h"
+#include "../BleKeyFilter.h"
 #include "../ButtonHints.h"
 #include "../SdMount.h"
 #include "../fonts/WriterFonts.h"
@@ -34,6 +35,7 @@ enum MenuRow : int16_t {
   ROW_DARK,
   ROW_ROTATE,
   ROW_AUTOSAVE,
+  ROW_REFRESH,
   ROW_EXIT,
   ROW_COUNT,
 };
@@ -100,6 +102,7 @@ void WriterApp::tick() {
   auto& ui = ctx_->ui;
 
   BleHid.poll();
+  bleKeyFilterPoll();  // swap in the rollover de-doubling filter on each link-up
 
   bool fast = false;
   bool full = false;
@@ -107,6 +110,7 @@ void WriterApp::tick() {
   while (BleHid.popKey(ev)) {
     ctx_->noteActivity();
     if (mode_ == Mode::Editing) handleKey(ev, fast, full);
+    else handleMenuKey(ev);
   }
 
   switch (mode_) {
@@ -266,7 +270,68 @@ void WriterApp::handleKey(const freeink::KeyEvent& ev, bool& fast, bool& full) {
   }
 
   if (ev.ch >= 0x20 && ev.ch < 0x7F) {
-    if (insertChar(ev.ch) && ev.ch == '.') triggerRefresh(fast, full);
+    if (insertChar(ev.ch)) {
+      // Trigger keys refresh immediately; other characters draw down the
+      // typed-char budget ("Refresh every" menu row, 0 = off) so long
+      // trigger-less stretches still reach the panel (INVARIANTS.md #1).
+      if (ev.ch == '.') {
+        triggerRefresh(fast, full);
+      } else if (SETTINGS.refreshEveryChars != 0 && ++charsSinceRefresh_ >= SETTINGS.refreshEveryChars) {
+        triggerRefresh(fast, full);
+      }
+    }
+  }
+}
+
+// Keyboard navigation for the non-editing modes: arrows move the selection or
+// focus, Enter activates, Esc/Backspace goes back — mirroring the physical
+// buttons, which lose presses during panel refreshes (BLE keys are queued).
+void WriterApp::handleMenuKey(const freeink::KeyEvent& ev) {
+  using SK = freeink::SpecialKey;
+  auto& ui = ctx_->ui;
+  const bool down = ev.special == SK::Down || ev.special == SK::Right;
+  const bool up = ev.special == SK::Up || ev.special == SK::Left;
+  const bool enter = ev.special == SK::Enter;
+  const bool back = ev.special == SK::Escape || ev.special == SK::Backspace;
+  switch (mode_) {
+    case Mode::Menu:
+      if (down && menuSel_ + 1 < ROW_COUNT) {
+        menuSel_++;
+        ui.invalidate(RefreshHint::Fast);
+      } else if (up && menuSel_ > 0) {
+        menuSel_--;
+        ui.invalidate(RefreshHint::Fast);
+      } else if (enter) {
+        menuActivate(menuSel_);
+      } else if (back) {
+        mode_ = Mode::Editing;
+        ui.invalidate(RefreshHint::Fast);
+      }
+      break;
+    case Mode::FilePicker:
+      if (down && fileSel_ + 1 < fileCount_) {
+        fileSel_++;
+        ui.invalidate(RefreshHint::Fast);
+      } else if (up && fileSel_ > 0) {
+        fileSel_--;
+        ui.invalidate(RefreshHint::Fast);
+      } else if (enter) {
+        openPicked();
+      } else if (back) {
+        mode_ = Mode::Menu;
+        ui.invalidate(RefreshHint::Fast);
+      }
+      break;
+    case Mode::Pairing:
+      // Focus-driven screen: feed the shared snapshot flags so the row and
+      // footer actions dispatch exactly like button presses.
+      if (down) ctx_->kbFocusNext = true;
+      else if (up) ctx_->kbFocusPrev = true;
+      else if (enter) ctx_->kbConfirm = true;
+      else if (back) ctx_->kbBack = true;
+      break;
+    default:
+      break;
   }
 }
 
@@ -299,6 +364,7 @@ void WriterApp::deleteForward() {
 
 void WriterApp::triggerRefresh(bool& fast, bool& full) {
   toast_[0] = 0;
+  charsSinceRefresh_ = 0;  // any trigger restarts the typed-char budget
   fastRefreshes_++;
   if (fastRefreshes_ >= SETTINGS.fullRefreshEvery) {
     fastRefreshes_ = 0;
@@ -382,6 +448,17 @@ void WriterApp::menuActivate(int16_t row) {
       break;
     case ROW_AUTOSAVE:
       SETTINGS.autosaveOnRefresh = !SETTINGS.autosaveOnRefresh;
+      SETTINGS.save();
+      ui.invalidate(RefreshHint::Fast);
+      break;
+    case ROW_REFRESH:
+      // Typed-char refresh budget: Off -> 25 -> 50 -> 100 -> Off. Budget
+      // refreshes go through triggerRefresh(), so they count toward the same
+      // every-Nth FULL promotion as the trigger keys (INVARIANTS.md #2).
+      SETTINGS.refreshEveryChars = SETTINGS.refreshEveryChars == 0    ? 25
+                                   : SETTINGS.refreshEveryChars == 25 ? 50
+                                   : SETTINGS.refreshEveryChars == 50 ? 100
+                                                                      : 0;
       SETTINGS.save();
       ui.invalidate(RefreshHint::Fast);
       break;
@@ -691,6 +768,11 @@ void WriterApp::drawMenu(UiApp::ScreenType& screen) {
   items[ROW_ROTATE].value = SETTINGS.landscape ? "Landscape" : "Portrait";
   items[ROW_AUTOSAVE].label = "Autosave on refresh";
   items[ROW_AUTOSAVE].value = SETTINGS.autosaveOnRefresh ? "On" : "Off";
+  static char refreshVal[16];
+  if (SETTINGS.refreshEveryChars == 0) strlcpy(refreshVal, "Off", sizeof(refreshVal));
+  else snprintf(refreshVal, sizeof(refreshVal), "%u chars", SETTINGS.refreshEveryChars);
+  items[ROW_REFRESH].label = "Refresh every";
+  items[ROW_REFRESH].value = refreshVal;
   items[ROW_EXIT].label = "Exit to launcher";
   for (int i = 0; i < ROW_COUNT; i++) items[i].actionValue = i;
 

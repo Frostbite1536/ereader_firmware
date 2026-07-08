@@ -54,6 +54,15 @@ struct AppContext {
   AppId pendingApp = APP_COUNT;  // APP_COUNT = no switch requested
   bool restartPending = false;
   uint32_t lastActivityMs = 0;
+
+  // Keyboard-driven menu navigation: apps translate BLE keys into these
+  // one-shot flags in tick(); the main loop ORs them into the frame's input
+  // snapshot, so focus-driven screens react exactly as if a button was
+  // pressed. Cleared by the main loop every pass.
+  bool kbFocusNext = false;
+  bool kbFocusPrev = false;
+  bool kbConfirm = false;
+  bool kbBack = false;
 };
 
 // One app = screen drawing + input handling + lifecycle. Handlers are

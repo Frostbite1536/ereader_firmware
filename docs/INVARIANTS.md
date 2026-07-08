@@ -5,9 +5,13 @@ if it compiles and demos fine.
 
 ## Writer refresh contract
 
-1. **A plain keystroke never refreshes the panel.** Text lands in the buffer;
-   the screen changes only on: Enter, Tab, `.` (fast refresh), Esc (forced
-   fast refresh), Ctrl+L (full refresh / ghost clear), menu open/close.
+1. **A plain keystroke never refreshes the panel immediately.** Text lands in
+   the buffer; the screen changes only on: Enter, Tab, `.` (fast refresh),
+   Esc (forced fast refresh), Ctrl+L (full refresh / ghost clear), menu
+   open/close — plus the typed-char budget: when `Settings.refreshEveryChars`
+   is non-zero (menu "Refresh every", default 50; first hardware feedback),
+   the Nth buffered character since the last refresh counts as a trigger.
+   "Off" restores the strict contract.
 2. **Every Nth trigger refresh is promoted to FULL_REFRESH** (N =
    `Settings.fullRefreshEvery`, default 15) so ghosting and DC imbalance never
    accumulate unbounded. Do not remove the promotion.

@@ -15,6 +15,7 @@ void Settings::load() {
   darkMode = prefs.getBool("darkMode", darkMode);
   autosaveOnRefresh = prefs.getBool("autoRefSave", autosaveOnRefresh);
   fullRefreshEvery = prefs.getUChar("fullEvery", fullRefreshEvery);
+  refreshEveryChars = prefs.getUChar("refEvChars", refreshEveryChars);
   lastApp = prefs.getUChar("lastApp", lastApp);
   landscape = prefs.getBool("landscape", landscape);
   String doc = prefs.getString("lastDoc", "");
@@ -31,6 +32,7 @@ void Settings::save() const {
   prefs.putBool("darkMode", darkMode);
   prefs.putBool("autoRefSave", autosaveOnRefresh);
   prefs.putUChar("fullEvery", fullRefreshEvery);
+  prefs.putUChar("refEvChars", refreshEveryChars);
   prefs.putUChar("lastApp", lastApp);
   prefs.putBool("landscape", landscape);
   prefs.putString("lastDoc", lastDoc);

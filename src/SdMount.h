@@ -25,7 +25,11 @@ inline bool ensureSdMounted() {
   if (lastAttemptMs != 0 && now - lastAttemptMs < 4000) return false;
   lastAttemptMs = now;
 
-  static const uint32_t kSpiHz[] = {0 /* profile default */, 20000000, 10000000};
+  // The Xteink SD shares the display SPI bus, which the STOCK firmware clocks
+  // at 5 MHz (HARDWARE.md) — while the SD manager's profile default is 40 MHz.
+  // The tester's card failed to mount at every app entry, so the walk now goes
+  // all the way down to stock-like speeds before giving up.
+  static const uint32_t kSpiHz[] = {0 /* profile default (40 MHz) */, 20000000, 10000000, 5000000, 2000000};
   for (const uint32_t hz : kSpiHz) {
     BoardConfig::ACTIVE.sd.spiHz = hz;
     if (SdMan.begin()) break;
