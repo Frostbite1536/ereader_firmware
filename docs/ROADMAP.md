@@ -45,6 +45,17 @@
 - **`DisplayTarget` orientation is constructor-only.** A runtime
   `setOrientation()` would let the landscape toggle apply without the reboot
   `requestRestart()` currently performs.
+- **`BleKeyboardHost` security policy is hardcoded** (legacy-only pairing,
+  ENC-only key distribution — tuned for page-turner remotes). Modern
+  keyboards expect LE Secure Connections and IRK exchange (they advertise
+  with rotating resolvable private addresses); a 2025 Logitech K250 reached
+  the passkey prompt and then failed legacy pairing. Workaround:
+  `src/BleCompat.h` rewrites the NimBLE `ble_hs_cfg` globals right after
+  `BleHid.begin()`. Upstream fix: `FREEINK_BLE_HID_*` flags for sc/key-dist.
+  Related suspect if keyboards still fail: `ClientCB::onConnParamsUpdateRequest`
+  returns false (rejects all peripheral conn-param requests); some keyboards
+  drop the link when their update is rejected — not overridable from our
+  layer, needs an SDK knob.
 
 ## Known v0.1 limitations
 

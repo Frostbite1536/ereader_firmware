@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "../BleCompat.h"
 #include "../ButtonHints.h"
 #include "../SdMount.h"
 #include "../fonts/WriterFonts.h"
@@ -77,6 +78,7 @@ void WriterApp::onEnter() {
   // NimBLE bring-up requires full CPU frequency (INVARIANTS.md #12); we never
   // downclock, so this holds by construction.
   BleHid.begin("Cherith's InkPad");
+  applyBleKeyboardCompat();  // after begin(): begin() resets the security globals
   lastConnected_ = BleHid.isConnected();
   ctx_->ui.setScreen(&WriterApp::drawScreen, this, RefreshHint::Full);
 }
@@ -791,7 +793,10 @@ void WriterApp::drawPairing(UiApp::ScreenType& screen) {
     screen.list(lp);
   } else if (!pairMsg_[0]) {
     screen.spacer(24);
-    screen.popup(BleHid.isScanning() ? "Scanning for keyboards..." : "No devices found. Rescan?");
+    // Bluetooth-Classic-only keyboards never advertise on BLE, so they can't
+    // appear here (HARDWARE.md: the radio has no Classic support) — say so.
+    screen.popup(BleHid.isScanning() ? "Scanning for keyboards..."
+                                     : "No devices found. Rescan?\nBLE keyboards only (no BT Classic).");
   }
   if (pairMsg_[0]) screen.popup(pairMsg_);
 }
