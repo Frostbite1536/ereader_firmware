@@ -200,8 +200,24 @@ void WriterApp::tick() {
     }
   }
 
+  // Idle catch-up (INVARIANTS.md #1/#3): once the keyboard has been quiet for
+  // a beat, render whatever the strict contract left off-screen (plain chars
+  // under the budget, backspace, caret moves) and flush dirty text to card.
+  // Autosave living here — not in triggerRefresh() — keeps SD I/O off the
+  // typing path entirely; a missing card costs the pause, never a keystroke.
+  // One shot per pause: the timer disarms until the next edit re-arms it.
+  if (mode_ == Mode::Editing && lastEditMs_ != 0 && millis() - lastEditMs_ >= IDLE_CATCHUP_MS &&
+      (screenStale_ || (SETTINGS.autosave && dirty_))) {
+    lastEditMs_ = 0;
+    triggerRefresh(fast, full);  // counts toward the FULL promotion like any trigger
+    if (SETTINGS.autosave && dirty_ && !save()) {
+      strlcpy(toast_, "Save FAILED", sizeof(toast_));  // quiet on success; redraw clears the '*'
+    }
+  }
+
   if (full) ui.invalidate(RefreshHint::Full);
   else if (fast) ui.invalidate(RefreshHint::Fast);
+  if (fast || full) screenStale_ = false;  // this frame reaches the panel below
 }
 
 void WriterApp::handleKey(const freeink::KeyEvent& ev, bool& fast, bool& full) {
@@ -246,25 +262,38 @@ void WriterApp::handleKey(const freeink::KeyEvent& ev, bool& fast, bool& full) {
     }
     case SpecialKey::Backspace:
       backspace();
-      return;  // no refresh (INVARIANTS.md #3) — Esc redraws on demand
+      return;  // no immediate refresh (INVARIANTS.md #3) — idle catch-up or Esc shows it
     case SpecialKey::Delete:
       deleteForward();
       return;
     case SpecialKey::Escape:
       fast = true;
       return;
+    // Caret moves render on the idle catch-up (or Esc), same as backspace.
     case SpecialKey::Left:
-      if (cursor_ > 0) cursor_--;
+      if (cursor_ > 0) {
+        cursor_--;
+        noteEdit();
+      }
       return;
     case SpecialKey::Right:
-      if (cursor_ < len_) cursor_++;
+      if (cursor_ < len_) {
+        cursor_++;
+        noteEdit();
+      }
       return;
-    case SpecialKey::Home:
+    case SpecialKey::Home: {
+      const size_t was = cursor_;
       while (cursor_ > 0 && buf_[cursor_ - 1] != '\n') cursor_--;
+      if (cursor_ != was) noteEdit();
       return;
-    case SpecialKey::End:
+    }
+    case SpecialKey::End: {
+      const size_t was = cursor_;
       while (cursor_ < len_ && buf_[cursor_] != '\n') cursor_++;
+      if (cursor_ != was) noteEdit();
       return;
+    }
     default:
       break;
   }
@@ -342,6 +371,7 @@ bool WriterApp::insertChar(char c) {
   len_++;
   buf_[len_] = 0;
   dirty_ = true;
+  noteEdit();
   return true;
 }
 
@@ -352,6 +382,7 @@ void WriterApp::backspace() {
   len_--;
   buf_[len_] = 0;
   dirty_ = true;
+  noteEdit();
 }
 
 void WriterApp::deleteForward() {
@@ -360,6 +391,7 @@ void WriterApp::deleteForward() {
   len_--;
   buf_[len_] = 0;
   dirty_ = true;
+  noteEdit();
 }
 
 void WriterApp::triggerRefresh(bool& fast, bool& full) {
@@ -372,9 +404,9 @@ void WriterApp::triggerRefresh(bool& fast, bool& full) {
   } else {
     fast = true;
   }
-  if (SETTINGS.autosaveOnRefresh && dirty_) {
-    if (!save()) strlcpy(toast_, "Save FAILED", sizeof(toast_));
-  }
+  // No SD I/O here: autosave rides the idle catch-up in tick(), so trigger
+  // keys and the typed-char budget cost one panel refresh and nothing else
+  // (autosave-on-refresh stalled typing mid-sentence — second K250 round).
 }
 
 // --- menu ------------------------------------------------------------------------
@@ -447,7 +479,7 @@ void WriterApp::menuActivate(int16_t row) {
       ctx_->requestRestart();
       break;
     case ROW_AUTOSAVE:
-      SETTINGS.autosaveOnRefresh = !SETTINGS.autosaveOnRefresh;
+      SETTINGS.autosave = !SETTINGS.autosave;
       SETTINGS.save();
       ui.invalidate(RefreshHint::Fast);
       break;
@@ -766,8 +798,8 @@ void WriterApp::drawMenu(UiApp::ScreenType& screen) {
   items[ROW_DARK].value = SETTINGS.darkMode ? "On" : "Off";
   items[ROW_ROTATE].label = "Screen rotation";
   items[ROW_ROTATE].value = SETTINGS.landscape ? "Landscape" : "Portrait";
-  items[ROW_AUTOSAVE].label = "Autosave on refresh";
-  items[ROW_AUTOSAVE].value = SETTINGS.autosaveOnRefresh ? "On" : "Off";
+  items[ROW_AUTOSAVE].label = "Autosave";
+  items[ROW_AUTOSAVE].value = SETTINGS.autosave ? "On" : "Off";
   static char refreshVal[16];
   if (SETTINGS.refreshEveryChars == 0) strlcpy(refreshVal, "Off", sizeof(refreshVal));
   else snprintf(refreshVal, sizeof(refreshVal), "%u chars", SETTINGS.refreshEveryChars);

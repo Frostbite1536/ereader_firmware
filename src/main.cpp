@@ -5,6 +5,7 @@
 
 #include <Arduino.h>
 #include <BatteryMonitor.h>
+#include <SPI.h>
 #include <BoardConfig.h>
 #include <EInkDisplay.h>
 #include <FreeInkUIDisplayTarget.h>
@@ -128,6 +129,18 @@ void setup() {
   launcher.setModelName(isX3 ? "Xteink X3" : "Xteink X4");
 
   // 2. Hardware bring-up.
+  // Claim the shared SPI bus BEFORE the display driver does, with the SD's
+  // MISO attached. The Xteink profile leaves sd.sclk/mosi unassigned (shared
+  // bus), so SDCardManager never configures SPI itself, and the SSD1677/UC8253
+  // drivers pass spiMiso()=-1 to SPI.begin() — while the Arduino core ignores
+  // every SPI.begin() after the first. Net effect without this line: GPIO7 is
+  // never routed to the SPI peripheral and no SD mount can ever succeed
+  // (HARDWARE.md §SD on the shared bus; upstream fix in ROADMAP.md).
+  SPI.begin(BoardConfig::ACTIVE.display.sclk, BoardConfig::ACTIVE.sd.miso, BoardConfig::ACTIVE.display.mosi,
+            BoardConfig::ACTIVE.sd.cs);
+  // Park the card deselected so it can't drive MISO during panel traffic.
+  pinMode(BoardConfig::ACTIVE.sd.cs, OUTPUT);
+  digitalWrite(BoardConfig::ACTIVE.sd.cs, HIGH);
   display.begin();
   input.begin();
   // Mount + folder layout; apps retry via ensureSdMounted() when the card

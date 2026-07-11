@@ -7,7 +7,8 @@
   Ctrl+L ghost clear, Ctrl+S save, Ctrl+N new file, cursor editing
   (arrows/Home/End/Backspace/Delete), dark mode, 4 font sizes, word count +
   battery + filename status bar, `.txt` to `/docs`, autosave on sleep +
-  optional autosave-on-refresh, resume last document; "Open document" picker
+  optional idle autosave (rides the ~2 s catch-up refresh, never a
+  keystroke), resume last document; "Open document" picker
   over `/docs` + `/decks`; "Save folder" moves the document between `/docs`
   and `/decks` (write-new-then-delete-old, so a failed move loses nothing)
 - Flashcards: `/decks/*.txt`, `question|answer` lines, flip/next/prev —
@@ -36,6 +37,19 @@
 
 ## SDK change candidates (worked around in our layer)
 
+- **Xteink SD MISO is never attached to the SPI bus.** The X3/X4 profiles
+  leave `sd.sclk`/`sd.mosi` unassigned (shared display bus), so
+  `SDCardManager::begin()` never calls `SPI.begin()`; the bus is started by
+  `EpdBus::begin()` with the panel driver's `spiMiso()`, which the
+  SSD1677/UC8253 drivers leave at the base-class -1 (only `Ed2208M5Driver`
+  overrides it, for the M5's shared bus). First `SPI.begin()` wins in the
+  Arduino core, so MISO=7 is never routed and every SD mount fails at every
+  clock — the real cause of the first-hardware-test "SD not detected" (the
+  earlier 40→2 MHz clock walk could never help). Upstream fix: SSD1677/UC8253
+  override `spiMiso()`/`coCs()` from `BoardConfig::ACTIVE.sd` exactly like the
+  M5 driver. Workaround: `src/main.cpp` setup() calls `SPI.begin()` with the
+  SD MISO (and parks SD CS HIGH) before `display.begin()` (HARDWARE.md §SD on
+  the shared bus).
 - **`InvertedDrawTarget` gray dithers are invisible in dark mode.**
   DisplayTarget inks only the black dots of a dither ("off" pixels leave the
   background alone), so the inverted focus-highlight dither drew

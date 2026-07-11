@@ -7,7 +7,8 @@ where LLM-written firmware breaks:
 2. Refresh policy ↔ INVARIANTS.md: can any plain keystroke reach
    displayBuffer()? Is the Nth-refresh FULL promotion still wired?
 3. Save path: dirty-flag set on EVERY mutation? tmp+rename intact? All three
-   save triggers (manual, sleep, autosave-on-refresh) reaching the same code?
+   save triggers (manual, sleep, idle autosave) reaching the same code? No
+   save call reachable from a trigger-key/budget refresh (INVARIANTS.md #4a)?
 4. Flasher: validation before otadata in every entry point; failure paths
    leave otadata untouched; progress callback can't divide by zero.
 5. SD/display shared SPI bus: no SD I/O between a refresh kickoff and its

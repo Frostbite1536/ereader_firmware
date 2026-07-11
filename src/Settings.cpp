@@ -13,7 +13,7 @@ void Settings::load() {
   if (!prefs.begin(NS, /*readOnly=*/true)) return;  // first boot: keep defaults
   fontSize = prefs.getUChar("fontSize", fontSize);
   darkMode = prefs.getBool("darkMode", darkMode);
-  autosaveOnRefresh = prefs.getBool("autoRefSave", autosaveOnRefresh);
+  autosave = prefs.getBool("autosave", autosave);
   fullRefreshEvery = prefs.getUChar("fullEvery", fullRefreshEvery);
   refreshEveryChars = prefs.getUChar("refEvChars", refreshEveryChars);
   lastApp = prefs.getUChar("lastApp", lastApp);
@@ -30,7 +30,7 @@ void Settings::save() const {
   if (!prefs.begin(NS, /*readOnly=*/false)) return;
   prefs.putUChar("fontSize", fontSize);
   prefs.putBool("darkMode", darkMode);
-  prefs.putBool("autoRefSave", autosaveOnRefresh);
+  prefs.putBool("autosave", autosave);  // key renamed with the semantics (was autoRefSave)
   prefs.putUChar("fullEvery", fullRefreshEvery);
   prefs.putUChar("refEvChars", refreshEveryChars);
   prefs.putUChar("lastApp", lastApp);
