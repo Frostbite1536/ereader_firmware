@@ -13,7 +13,9 @@ void Settings::load() {
   if (!prefs.begin(NS, /*readOnly=*/true)) return;  // first boot: keep defaults
   fontSize = prefs.getUChar("fontSize", fontSize);
   darkMode = prefs.getBool("darkMode", darkMode);
-  autosave = prefs.getBool("autosave", autosave);
+  // "autosave" (idle autosave) superseded "autoRefSave" (autosave-on-refresh);
+  // fall back to the old key so a stored opt-out survives the upgrade.
+  autosave = prefs.getBool("autosave", prefs.getBool("autoRefSave", autosave));
   fullRefreshEvery = prefs.getUChar("fullEvery", fullRefreshEvery);
   refreshEveryChars = prefs.getUChar("refEvChars", refreshEveryChars);
   lastApp = prefs.getUChar("lastApp", lastApp);
