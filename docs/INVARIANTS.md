@@ -11,11 +11,15 @@ if it compiles and demos fine.
    open/close — plus the typed-char budget: when `Settings.refreshEveryChars`
    is non-zero (menu "Refresh every", default 50; first hardware feedback),
    the Nth buffered character since the last refresh counts as a trigger.
-   "Off" restores the strict contract.
+   "Off" restores the strict contract. One exception rides *pauses*, not
+   keystrokes: after ~2 s without input, a single idle catch-up refresh
+   renders anything the contract left off-screen (and carries the autosave —
+   see #4a). It fires at most once per pause and counts toward #2.
 2. **Every Nth trigger refresh is promoted to FULL_REFRESH** (N =
    `Settings.fullRefreshEvery`, default 15) so ghosting and DC imbalance never
    accumulate unbounded. Do not remove the promotion.
-3. **Backspace does not refresh.** (Esc exists to see where you are.)
+3. **Backspace does not refresh immediately.** (Esc shows where you are on
+   demand; the idle catch-up in #1 renders it after a pause.)
 
 ## Writer data safety
 
@@ -23,6 +27,12 @@ if it compiles and demos fine.
    every buffer mutation and cleared only after a successful SD write. Sleep,
    app exit, and power-off paths must save-if-dirty *before* the display or
    SD powers down.
+
+   4a. **Autosave never runs on the typing path.** It fires only on the idle
+   catch-up (#1) — never from a trigger-key or budget refresh — so SD I/O
+   (including a failed mount walk when no card is present) can only ever cost
+   a pause, not a keystroke. The second K250 round's typing lag came from
+   autosave-on-refresh saving mid-sentence; do not reattach it there.
 5. **Saves are atomic enough:** write to `<name>.tmp`, then rename over the
    target. Never truncate the target before the new content is fully on card.
 6. **Buffer-full is explicit.** At capacity the Writer rejects input and shows

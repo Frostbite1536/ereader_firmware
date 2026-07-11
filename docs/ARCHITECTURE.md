@@ -59,17 +59,20 @@ narrows this further (see INVARIANTS).
 BLE keyboard ──NimBLE──▶ BleKeyboardHost ring ──popKey()──▶ WriterApp::tick()
                                                    │ edits fixed 32 KB buffer
                                                    ▼
-                              trigger key? (Enter / Tab / '.')
+                       trigger key? (Enter / Tab / '.' / Nth budget char)
                                    │ yes                    │ no
                                    ▼                        ▼
-                    invalidate(Fast) [+ autosave]      buffer only,
+                    invalidate(Fast)                   buffer only,
                     → render → FAST_REFRESH            screen untouched
+                                            ~2 s idle ──▶ catch-up refresh
+                                                          [+ autosave]
 ```
 
 Documents are plain `.txt` under `/docs` on the SD card. Saves are
 whole-buffer rewrites through SdFat (a 32 KB file writes in well under a
-second); autosave fires on sleep, on app exit, and optionally on every
-refresh trigger.
+second); autosave fires on sleep, on app exit, and optionally on the idle
+catch-up ~2 s after the last keystroke — never on a refresh trigger, so SD
+I/O stays off the typing path (INVARIANTS.md #4a).
 
 ## Sleep
 

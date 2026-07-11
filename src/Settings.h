@@ -8,7 +8,7 @@ struct Settings {
   // Writer
   uint8_t fontSize = 1;             // 0=S 1=M 2=L 3=XL (DisplayTarget slots 3-6)
   bool darkMode = false;            // white-on-black via InvertedDrawTarget
-  bool autosaveOnRefresh = true;    // save on every trigger-key refresh
+  bool autosave = true;             // flush dirty text ~2 s after the last keystroke (idle catch-up)
   uint8_t fullRefreshEvery = 15;    // promote every Nth fast refresh to FULL
   uint8_t refreshEveryChars = 50;   // typed-char refresh budget; 0 = trigger keys only
   char lastDoc[64] = {0};           // resume target, e.g. "/docs/draft-003.txt"

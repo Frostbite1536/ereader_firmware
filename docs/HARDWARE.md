@@ -38,6 +38,29 @@ treated as an X4.
 The ladder decodes to six logical buttons (BACK, CONFIRM, LEFT, RIGHT, UP,
 DOWN) plus POWER — all handled by the SDK's `InputManager`.
 
+### SD on the shared bus: someone must attach MISO=7
+
+The Xteink profiles model the shared bus by leaving `sd.sclk`/`sd.mosi`
+`PIN_UNASSIGNED` (only `miso=7`, `cs=12` are set). Consequences, verified in
+SDK source:
+
+- `SDCardManager::begin()` skips its own `SPI.begin()` (it requires all three
+  SD bus pins assigned) *and* its display-CS deselect guard (it compares
+  `display.sclk == sd.sclk`, and `8 != PIN_UNASSIGNED`).
+- The display path calls `SPI.begin(sclk, spiMiso, mosi, cs)` with the panel
+  driver's `spiMiso()` — which is **-1** for SSD1677/UC8253 (only the M5's
+  ED2208 driver overrides it to pass the SD's MISO).
+- The Arduino core's `SPIClass::begin()` returns early once the bus is
+  started; later calls (including SdFat's internal no-arg one) never change
+  pins.
+
+So unless the application starts the bus itself with MISO=7 attached *before*
+`display.begin()`, the ESP32 can never hear the card and every mount fails at
+every SPI clock — the first-hardware-test "SD not detected" symptom.
+`src/main.cpp` setup() does exactly that (and parks SD CS=12 HIGH so an
+unselected card can't drive MISO during panel traffic). The display never
+reads MISO, so attaching it is harmless to the panel.
+
 Physical layout (first X4 hardware test, 2026-07): the bottom bezel row is,
 left to right, **BACK, CONFIRM, then the two buttons the ladder reports as
 LEFT and RIGHT**; UP and DOWN are the side buttons. Which of the right two is

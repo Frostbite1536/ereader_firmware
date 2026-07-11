@@ -265,9 +265,10 @@ and what the screen and (if running) the serial monitor showed.
    the device saves, shows the "Asleep — press POWER to wake" card, and
    sleeps (the card tells a sleeping device apart from a frozen one).
    Press power again to wake: the Writer resumes with the same text. Now
-   the harsher version: type a few words, wait a beat, and hold/slide the
-   physical power off if the device has one — on next boot the words must
-   still be there (autosave on refresh + on sleep).
+   the harsher version: type a few words, wait a beat (≥2 s — the idle
+   autosave fires then), and hold/slide the physical power off if the
+   device has one — on next boot the words must still be there (idle
+   autosave + autosave on sleep).
 5. **Menu round-trip.** BACK → menu → *Font size* cycles S/M/L/XL; *Dark
    mode* inverts the whole screen **and the selection highlight stays
    clearly visible while you move it**; *Screen rotation* restarts the

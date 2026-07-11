@@ -8,7 +8,9 @@
 //
 // Refresh contract (docs/INVARIANTS.md): plain keystrokes never touch the
 // panel; the screen updates only on Enter / Tab / '.' (fast), Esc (forced
-// fast), Ctrl+L (full, ghost clear), and menu transitions. Every Nth fast
+// fast), Ctrl+L (full, ghost clear), the typed-char budget, menu transitions —
+// and one idle catch-up ~2 s after the last key, which also carries the
+// autosave so SD I/O rides a pause, never a keystroke. Every Nth fast
 // refresh is promoted to a full refresh to keep the panel DC-balanced.
 //
 // Shortcuts: Ctrl+S save · Ctrl+N new file · Ctrl+L full refresh ·
@@ -40,6 +42,7 @@ class WriterApp : public App {
 
   static constexpr size_t CAP = 32 * 1024;  // per-document limit (~5k words)
   static constexpr int MAX_FILES = 32;      // picker cap across /docs + /decks
+  static constexpr uint32_t IDLE_CATCHUP_MS = 2000;  // quiet time before catch-up refresh + autosave
 
   // --- editing ---------------------------------------------------------------
   void handleKey(const freeink::KeyEvent& ev, bool& fast, bool& full);
@@ -48,6 +51,12 @@ class WriterApp : public App {
   void backspace();
   void deleteForward();
   void triggerRefresh(bool& fast, bool& full);
+  // Arm the idle catch-up: called on every buffer or caret change the strict
+  // refresh contract leaves off-screen.
+  void noteEdit() {
+    lastEditMs_ = millis();
+    screenStale_ = true;
+  }
 
   // --- files -----------------------------------------------------------------
   bool save();
@@ -81,6 +90,8 @@ class WriterApp : public App {
   bool dirty_ = false;
   uint16_t fastRefreshes_ = 0;  // since the last full refresh
   uint16_t charsSinceRefresh_ = 0;  // typed-char refresh budget (Settings.refreshEveryChars)
+  uint32_t lastEditMs_ = 0;     // idle catch-up timer; 0 = disarmed (fired or nothing pending)
+  bool screenStale_ = false;    // buffer/caret changed since the last panel push
   char toast_[24] = {0};        // one-shot status-bar note ("Saved", ...)
 
   // menu + file-picker selection (selection-driven lists, moved in tick())
