@@ -31,6 +31,7 @@ enum MenuRow : int16_t {
   ROW_NEW,
   ROW_FOLDER,
   ROW_PAIR,
+  ROW_FORGET,
   ROW_FONT,
   ROW_DARK,
   ROW_ROTATE,
@@ -45,6 +46,11 @@ constexpr uint8_t HID_MOD_CTRL = 0x11;  // left | right ctrl (HID modifier byte)
 // virtualizes but focus does not scroll it), so cap the pairing list at what
 // fits above the footer on both panels.
 constexpr size_t MAX_PAIR_ROWS = 8;
+// The NimBLE bond store holds 3 entries on this core (sdkconfig
+// CONFIG_BT_NIMBLE_MAX_BONDS — see platformio.ini; the SDK's own list allows
+// 4, mismatch logged in ROADMAP.md). A 4th pairing fails with nothing better
+// than "Pairing failed", so the pairing screen warns at this count.
+constexpr uint8_t MAX_STORED_BONDS = 3;
 }  // namespace
 
 void WriterApp::begin(AppContext& ctx) {
@@ -65,7 +71,8 @@ void WriterApp::begin(AppContext& ctx) {
   ctx.ui.on(ACT_PAIR_RESCAN, [](const ActionEvent&, void* self) {
     auto& w = *static_cast<WriterApp*>(self);
     w.pairMsg_[0] = 0;
-    BleHid.startScan(5000);
+    w.scanDrawSig_ = 0;
+    BleHid.startScan(0);  // restart clears stale entries; runs until pick/back
     w.ctx_->ui.invalidate(RefreshHint::Fast);
   }, this);
 
@@ -114,6 +121,24 @@ void WriterApp::tick() {
     ctx_->noteActivity();
     if (mode_ == Mode::Editing) handleKey(ev, fast, full);
     else handleMenuKey(ev);
+  }
+
+  // Link-state edge, watched in every mode: a keyboard arriving (auto-reconnect
+  // after sleep or an address rotation) or dropping is worth one status-bar
+  // toast + Fast refresh. That is a menu-transition-class event, not a
+  // keystroke, so the refresh contract (INVARIANTS.md #1) is untouched.
+  if (BleHid.isConnected() != lastConnected_) {
+    lastConnected_ = BleHid.isConnected();
+    strlcpy(toast_, lastConnected_ ? "Keyboard connected" : "Keyboard disconnected", sizeof(toast_));
+    if (lastConnected_ && mode_ == Mode::Pairing) {  // pairing done — back into the text
+      mode_ = Mode::Editing;
+      pairMsg_[0] = 0;
+      pendingAddr_[0] = 0;
+      userConnect_ = false;
+      BleHid.stopScan();
+      BleHid.releaseScanResults();  // reclaim scan bookkeeping RAM while writing
+    }
+    ui.invalidate(RefreshHint::Fast);
   }
 
   switch (mode_) {
@@ -167,8 +192,11 @@ void WriterApp::tick() {
       if (in.wasPressed(InputManager::BTN_BACK)) {
         pendingAddr_[0] = 0;  // abandon a queued pick
         userConnect_ = false;
+        BleHid.stopScan();
+        BleHid.releaseScanResults();
         mode_ = Mode::Menu;
         ui.invalidate(RefreshHint::Fast);
+        break;
       }
       if (!scanKicked_ && !BleHid.isConnected()) {
         if (BleHid.isConnecting()) {
@@ -177,7 +205,11 @@ void WriterApp::tick() {
           // after its 8 s connect timeout. The bond itself is untouched.
           bleCancelConnectAttempt();
         } else {
-          BleHid.startScan(5000);
+          // 0 = scan until pick/back/connect stops it, so a keyboard put into
+          // pairing mode AFTER this screen opened still shows up by itself —
+          // no Rescan timing dance. Scanning also parks the SDK's
+          // auto-reconnect, which is exactly right on this screen.
+          BleHid.startScan(0);
           scanKicked_ = true;
         }
       }
@@ -200,24 +232,43 @@ void WriterApp::tick() {
         // user's own pick is worth showing.
         userConnect_ = false;
         snprintf(pairMsg_, sizeof(pairMsg_), "Connect failed:\n%s", fail);
+        scanKicked_ = false;  // resume scanning so the list stays live
         ui.invalidate(RefreshHint::Fast);
       }
-      // Live-update the list while scanning.
+      // Live-update the list while scanning — but only when its content
+      // changed. The scan now runs as long as this screen is open, and an
+      // unconditional 1.5 s cadence would tick the panel forever.
       if (BleHid.isScanning() && millis() - lastScanDraw_ > 1500) {
         lastScanDraw_ = millis();
-        ui.invalidate(RefreshHint::Fast);
-      }
-      if (BleHid.isConnected() != lastConnected_) {
-        lastConnected_ = BleHid.isConnected();
-        if (lastConnected_) {  // pairing done — drop the user back into the text
-          mode_ = Mode::Editing;
-          pairMsg_[0] = 0;
-          pendingAddr_[0] = 0;
-          userConnect_ = false;
-          strlcpy(toast_, "Keyboard connected", sizeof(toast_));
+        uint32_t sig = BleHid.deviceCount();
+        for (uint8_t i = 0; i < BleHid.deviceCount(); ++i) {
+          const auto& d = BleHid.device(i);
+          sig = sig * 31u + (d.hasName ? 1u : 0u) + (d.hid ? 2u : 0u);
+          for (const char* p = d.name; *p; ++p) sig = sig * 31u + static_cast<uint8_t>(*p);
         }
+        if (sig != scanDrawSig_) {
+          scanDrawSig_ = sig;
+          ui.invalidate(RefreshHint::Fast);
+        }
+      }
+      break;
+    }
+    case Mode::Forget: {
+      if (in.wasPressed(InputManager::BTN_BACK)) {
+        mode_ = Mode::Menu;
+        ui.invalidate(RefreshHint::Fast);
+        break;
+      }
+      const int16_t n = BleHid.pairedCount();
+      if ((in.wasPressed(InputManager::BTN_DOWN) || in.wasPressed(InputManager::BTN_RIGHT)) && forgetSel_ + 1 < n) {
+        forgetSel_++;
         ui.invalidate(RefreshHint::Fast);
       }
+      if ((in.wasPressed(InputManager::BTN_UP) || in.wasPressed(InputManager::BTN_LEFT)) && forgetSel_ > 0) {
+        forgetSel_--;
+        ui.invalidate(RefreshHint::Fast);
+      }
+      if (in.wasPressed(InputManager::BTN_CONFIRM) && n > 0) forgetSelected();
       break;
     }
   }
@@ -264,6 +315,25 @@ void WriterApp::tryPendingConnect() {
   } else {
     bleCancelConnectAttempt();
   }
+}
+
+// Forget the bond under the Forget-screen cursor. Copies the entry first:
+// BleHid.forget() compacts the SDK's array, so the reference would go stale.
+// forget() only removes the stored bond — if that keyboard is the one on the
+// live link, drop the link too so "forget" means what it says. The public API
+// exposes no address for the current link, so match connectedName(), which is
+// the bond's name or (when nameless) its address.
+void WriterApp::forgetSelected() {
+  if (forgetSel_ < 0 || forgetSel_ >= BleHid.pairedCount()) return;
+  const freeink::PairedHidDevice b = BleHid.paired(static_cast<uint8_t>(forgetSel_));
+  if (BleHid.isConnected() &&
+      (strcmp(BleHid.connectedName(), b.addr) == 0 || (b.name[0] && strcmp(BleHid.connectedName(), b.name) == 0))) {
+    BleHid.disconnect();
+  }
+  BleHid.forget(b.addr);
+  snprintf(toast_, sizeof(toast_), "Forgot %s", b.name[0] ? b.name : b.addr);
+  if (forgetSel_ > 0 && forgetSel_ >= BleHid.pairedCount()) forgetSel_--;
+  ctx_->ui.invalidate(RefreshHint::Fast);
 }
 
 void WriterApp::handleKey(const freeink::KeyEvent& ev, bool& fast, bool& full) {
@@ -405,6 +475,20 @@ void WriterApp::handleMenuKey(const freeink::KeyEvent& ev) {
       else if (enter) ctx_->kbConfirm = true;
       else if (back) ctx_->kbBack = true;
       break;
+    case Mode::Forget:
+      if (down && forgetSel_ + 1 < BleHid.pairedCount()) {
+        forgetSel_++;
+        ui.invalidate(RefreshHint::Fast);
+      } else if (up && forgetSel_ > 0) {
+        forgetSel_--;
+        ui.invalidate(RefreshHint::Fast);
+      } else if (enter && BleHid.pairedCount() > 0) {
+        forgetSelected();
+      } else if (back) {
+        mode_ = Mode::Menu;
+        ui.invalidate(RefreshHint::Fast);
+      }
+      break;
     default:
       break;
   }
@@ -498,6 +582,12 @@ void WriterApp::menuActivate(int16_t row) {
       pairMsg_[0] = 0;
       pendingAddr_[0] = 0;
       userConnect_ = false;
+      scanDrawSig_ = 0;
+      ui.invalidate(RefreshHint::Fast);
+      break;
+    case ROW_FORGET:
+      mode_ = Mode::Forget;
+      forgetSel_ = 0;
       ui.invalidate(RefreshHint::Fast);
       break;
     case ROW_FONT:
@@ -753,6 +843,7 @@ void WriterApp::drawScreen(UiApp::ScreenType& screen, void* self) {
     case Mode::Menu: w.drawMenu(screen); break;
     case Mode::Pairing: w.drawPairing(screen); break;
     case Mode::FilePicker: w.drawFilePicker(screen); break;
+    case Mode::Forget: w.drawForget(screen); break;
   }
 }
 
@@ -840,6 +931,10 @@ void WriterApp::drawMenu(UiApp::ScreenType& screen) {
   items[ROW_FOLDER].label = "Save folder";
   items[ROW_FOLDER].value = inDecks ? "/decks" : "/docs";
   items[ROW_PAIR].label = "Keyboard pairing";
+  items[ROW_FORGET].label = "Forget keyboards";
+  static char forgetVal[12];
+  snprintf(forgetVal, sizeof(forgetVal), "%u stored", BleHid.pairedCount());
+  items[ROW_FORGET].value = forgetVal;
   items[ROW_FONT].label = "Font size";
   items[ROW_FONT].value = fonts::sizeName(SETTINGS.fontSize);
   items[ROW_DARK].label = "Dark mode";
@@ -922,7 +1017,11 @@ void WriterApp::drawPairing(UiApp::ScreenType& screen) {
   static char sub[48];
   if (BleHid.isConnected()) snprintf(sub, sizeof(sub), "connected: %s", BleHid.connectedName());
   else if (BleHid.isConnecting()) strlcpy(sub, "connecting...", sizeof(sub));
-  else if (BleHid.isScanning()) strlcpy(sub, "scanning...", sizeof(sub));
+  else if (BleHid.pairedCount() >= MAX_STORED_BONDS) {
+    // The NimBLE bond store is full; the next pairing fails with a bare
+    // "Pairing failed". Point at the fix instead of leaving it a mystery.
+    strlcpy(sub, "storage full - use Forget keyboards", sizeof(sub));
+  } else if (BleHid.isScanning()) strlcpy(sub, "scanning...", sizeof(sub));
   else strlcpy(sub, "select your keyboard", sizeof(sub));
   screen.header("Keyboard", sub);
 
@@ -971,4 +1070,35 @@ void WriterApp::drawPairing(UiApp::ScreenType& screen) {
                                      : "No devices found. Rescan?\nBLE keyboards only (no BT Classic).");
   }
   if (pairMsg_[0]) screen.popup(pairMsg_);
+}
+
+void WriterApp::drawForget(UiApp::ScreenType& screen) {
+  static char sub[24];
+  snprintf(sub, sizeof(sub), "%u of %u stored", BleHid.pairedCount(), MAX_STORED_BONDS);
+  screen.header("Forget keyboards", sub);
+  drawButtonHints(screen, "Back", "Forget", "Up", "Down");
+
+  const uint8_t n = BleHid.pairedCount();
+  if (n == 0) {
+    screen.spacer(24);
+    screen.popup("No paired keyboards.");
+    return;
+  }
+
+  // Selection-driven like the menu (tick() owns the buttons): CONFIRM forgets
+  // the selected bond outright. No are-you-sure step — re-pairing is two
+  // button presses away, and the toast names what was removed.
+  ListItem items[freeink::BleKeyboardHost::kMaxBonds] = {};
+  for (uint8_t i = 0; i < n; i++) {
+    const auto& b = BleHid.paired(i);
+    items[i].label = b.name[0] ? b.name : b.addr;
+    items[i].subtitle = b.addr;
+  }
+  ListProps lp;
+  lp.items = items;
+  lp.count = n;
+  lp.selectedIndex = forgetSel_;
+  lp.action = NO_ACTION;
+  lp.rowHeight = 0;  // inherit theme metric
+  screen.list(lp);
 }

@@ -84,6 +84,13 @@
   attempt (`bleCancelConnectAttempt()`), and reissues from its tick until
   accepted. Upstream fix: queue the explicit connect over auto-reconnect (or
   pause auto-reconnect while a scan/pair UI is active).
+- **`BleKeyboardHost::kMaxBonds` (4) exceeds the NimBLE bond store (3).**
+  The core's sdkconfig fixes `CONFIG_BT_NIMBLE_MAX_BONDS` at 3, so a 4th
+  pairing fails at key storage with a bare "Pairing failed" while the SDK's
+  own list would happily hold it. Mitigation in our layer: the Writer's
+  "Forget keyboards" screen (menu row) removes bonds, and the pairing screen
+  warns "storage full" at 3. Upstream fix: derive `kMaxBonds` from the
+  sdkconfig value (or surface a distinct storage-full error).
 - **`BleKeyboardHost` doubles letters on rollover typing.** The generic
   page-turner fallback in `onReportIngest` runs whenever a keyboard-shaped
   report emits no NEW key and the report map has a consumer page (all modern
@@ -114,8 +121,10 @@
 - The keyboard-pairing list shows 8 devices (focus-driven lists can't
   scroll; unnamed devices are filtered out at build level). HID advertisers
   fill those rows first, so a keyboard can't be crowded out by named
-  non-HID gadgets in a busy room. The selection-driven lists (Writer menu,
-  document picker, decks, bins) scroll and have no such cap.
+  non-HID gadgets in a busy room, and the scan runs continuously while the
+  screen is open (the panel redraws only when the list content changes).
+  The selection-driven lists (Writer menu, document picker, decks, bins)
+  scroll and have no such cap.
 - The document picker lists the first 32 `.txt` files across `/docs` +
   `/decks` (alphabetical per folder). Past that, manage files on a PC.
 - No on-device rename: a draft moved to `/decks` keeps its `draft-NNN.txt`
