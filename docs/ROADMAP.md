@@ -66,10 +66,24 @@
   the passkey prompt and then failed legacy pairing. Workaround:
   `src/BleCompat.h` rewrites the NimBLE `ble_hs_cfg` globals right after
   `BleHid.begin()`. Upstream fix: `FREEINK_BLE_HID_*` flags for sc/key-dist.
-  Related suspect if keyboards still fail: `ClientCB::onConnParamsUpdateRequest`
-  returns false (rejects all peripheral conn-param requests); some keyboards
-  drop the link when their update is rejected — not overridable from our
-  layer, needs an SDK knob.
+- **`BleKeyboardHost` rejects all peripheral conn-param update requests**
+  (`ClientCB::onConnParamsUpdateRequest` returns false — tuned for remotes
+  that misbehave after a negotiation). Real keyboards request their preferred
+  interval/latency right after encryption, and some drop the link when
+  refused — which presents as "pairs, then instantly disconnects" (suspected
+  in the second Logitech hardware round). Workaround: `applyBleKeyboardCompat()`
+  fetches the SDK's still-disconnected client via
+  `NimBLEDevice::getDisconnectedClient()` and swaps in mirrored callbacks
+  that accept the request. Upstream fix: an `FREEINK_BLE_HID_*` knob.
+- **`BleKeyboardHost::connect()` refuses while auto-reconnect holds the
+  connection task.** With a bond stored, poll() retries the old keyboard
+  every ~4 s once scanning stops, each attempt holding the single connection
+  task for up to the 8 s connect timeout — so a user-initiated connect() to a
+  NEW keyboard returns false most of the time, and nothing in the SDK queues
+  it. Workaround: the Writer keeps the picked address, cancels the in-flight
+  attempt (`bleCancelConnectAttempt()`), and reissues from its tick until
+  accepted. Upstream fix: queue the explicit connect over auto-reconnect (or
+  pause auto-reconnect while a scan/pair UI is active).
 - **`BleKeyboardHost` doubles letters on rollover typing.** The generic
   page-turner fallback in `onReportIngest` runs whenever a keyboard-shaped
   report emits no NEW key and the report map has a consumer page (all modern
@@ -97,10 +111,11 @@
   InputManager::beginAsync + popPress.
 - SD hot-insert is detected on app entry (ensureSdMounted in SdMount.h), not
   instantly — insert the card, then re-open the app from the launcher.
-- The keyboard-pairing list shows the first 8 devices found (focus-driven
-  lists can't scroll; unnamed devices are filtered out at build level, so 8
-  is plenty in practice). The selection-driven lists (Writer menu, document
-  picker, decks, bins) scroll and have no such cap.
+- The keyboard-pairing list shows 8 devices (focus-driven lists can't
+  scroll; unnamed devices are filtered out at build level). HID advertisers
+  fill those rows first, so a keyboard can't be crowded out by named
+  non-HID gadgets in a busy room. The selection-driven lists (Writer menu,
+  document picker, decks, bins) scroll and have no such cap.
 - The document picker lists the first 32 `.txt` files across `/docs` +
   `/decks` (alphabetical per folder). Past that, manage files on a PC.
 - No on-device rename: a draft moved to `/decks` keeps its `draft-NNN.txt`

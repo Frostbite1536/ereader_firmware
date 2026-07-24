@@ -53,8 +53,11 @@ void WriterApp::begin(AppContext& ctx) {
     auto& w = *static_cast<WriterApp*>(self);
     if (ev.value >= 0 && ev.value < BleHid.deviceCount()) {
       BleHid.stopScan();
-      w.pairMsg_[0] = 0;
-      BleHid.connect(BleHid.device(ev.value).addr);
+      const auto& d = BleHid.device(ev.value);
+      strlcpy(w.pendingAddr_, d.addr, sizeof(w.pendingAddr_));
+      snprintf(w.pairMsg_, sizeof(w.pairMsg_), "Connecting to\n%s...", d.name);
+      w.userConnect_ = false;
+      w.tryPendingConnect();
     }
     w.ctx_->ui.invalidate(RefreshHint::Fast);
   }, this);
@@ -162,13 +165,25 @@ void WriterApp::tick() {
       break;
     case Mode::Pairing: {
       if (in.wasPressed(InputManager::BTN_BACK)) {
+        pendingAddr_[0] = 0;  // abandon a queued pick
+        userConnect_ = false;
         mode_ = Mode::Menu;
         ui.invalidate(RefreshHint::Fast);
       }
-      if (!scanKicked_ && !BleHid.isConnected() && !BleHid.isConnecting()) {
-        BleHid.startScan(5000);
-        scanKicked_ = true;
+      if (!scanKicked_ && !BleHid.isConnected()) {
+        if (BleHid.isConnecting()) {
+          // The SDK's auto-reconnect (to a previously bonded keyboard) is
+          // holding the connection task; abort it so the scan starts now, not
+          // after its 8 s connect timeout. The bond itself is untouched.
+          bleCancelConnectAttempt();
+        } else {
+          BleHid.startScan(5000);
+          scanKicked_ = true;
+        }
       }
+      // A picked keyboard may still be waiting for the connection task (see
+      // tryPendingConnect); reissue as soon as the task frees up.
+      if (pendingAddr_[0] && !BleHid.isConnecting()) tryPendingConnect();
       // Some keyboards demand a passkey instead of Just Works bonding; without
       // showing it, pairing stalls silently.
       uint32_t passkey = 0;
@@ -178,7 +193,12 @@ void WriterApp::tick() {
         ui.invalidate(RefreshHint::Fast);
       }
       char fail[40];
-      if (BleHid.takeConnectFailure(fail, sizeof(fail))) {
+      if (BleHid.takeConnectFailure(fail, sizeof(fail)) && userConnect_) {
+        // The take drains failures unconditionally — including the SDK's
+        // background auto-reconnect timing out on the old keyboard (powered
+        // off, or its private address rotated). Only the result of the
+        // user's own pick is worth showing.
+        userConnect_ = false;
         snprintf(pairMsg_, sizeof(pairMsg_), "Connect failed:\n%s", fail);
         ui.invalidate(RefreshHint::Fast);
       }
@@ -192,6 +212,8 @@ void WriterApp::tick() {
         if (lastConnected_) {  // pairing done — drop the user back into the text
           mode_ = Mode::Editing;
           pairMsg_[0] = 0;
+          pendingAddr_[0] = 0;
+          userConnect_ = false;
           strlcpy(toast_, "Keyboard connected", sizeof(toast_));
         }
         ui.invalidate(RefreshHint::Fast);
@@ -218,6 +240,30 @@ void WriterApp::tick() {
   if (full) ui.invalidate(RefreshHint::Full);
   else if (fast) ui.invalidate(RefreshHint::Fast);
   if (fast || full) screenStale_ = false;  // this frame reaches the panel below
+}
+
+// Hand a picked keyboard to the SDK as soon as its single connection task is
+// free. BleHid.connect() refuses (returns false) while ANY attempt is in
+// flight — including the SDK's own auto-reconnect to a previously bonded
+// keyboard, which retries every ~4 s once scanning stops and can hold the task
+// for the full 8 s connect timeout. Ignoring that refusal (the old code did)
+// meant picking a NEW keyboard while an old bond existed silently did nothing.
+// Abort the busy attempt and let the Pairing tick reissue until the pick lands.
+void WriterApp::tryPendingConnect() {
+  if (!pendingAddr_[0]) return;
+  if (BleHid.isConnected()) {
+    // Switching keyboards: the SDK holds one link and its connect path never
+    // drops an existing one (that connect would just fail). Free the link;
+    // the Pairing tick reissues once it's down.
+    BleHid.disconnect();
+    return;
+  }
+  if (BleHid.connect(pendingAddr_)) {
+    userConnect_ = true;
+    pendingAddr_[0] = 0;
+  } else {
+    bleCancelConnectAttempt();
+  }
 }
 
 void WriterApp::handleKey(const freeink::KeyEvent& ev, bool& fast, bool& full) {
@@ -450,6 +496,8 @@ void WriterApp::menuActivate(int16_t row) {
       mode_ = Mode::Pairing;
       scanKicked_ = false;
       pairMsg_[0] = 0;
+      pendingAddr_[0] = 0;
+      userConnect_ = false;
       ui.invalidate(RefreshHint::Fast);
       break;
     case ROW_FONT:
@@ -884,15 +932,25 @@ void WriterApp::drawPairing(UiApp::ScreenType& screen) {
   };
   screen.footer(footer, 2);
 
+  // Only MAX_PAIR_ROWS of up to kMaxDiscovered devices fit on screen, and a
+  // busy room can push the keyboard past the cap (that reads as "my keyboard
+  // never shows up"). Fill the visible rows with HID advertisers first; two
+  // passes keep discovery order within each group so rows don't shuffle
+  // between live scan refreshes. actionValue carries the real SDK index,
+  // which no longer equals the row.
   const uint8_t total = BleHid.deviceCount();
-  const uint8_t count = total < MAX_PAIR_ROWS ? total : MAX_PAIR_ROWS;
   ListItem items[MAX_PAIR_ROWS] = {};
-  for (uint8_t i = 0; i < count; i++) {
-    const auto& d = BleHid.device(i);
-    items[i].label = d.name;
-    items[i].subtitle = d.addr;
-    items[i].value = d.hid ? "HID" : "";
-    items[i].actionValue = i;
+  uint8_t count = 0;
+  for (int hidPass = 1; hidPass >= 0 && count < MAX_PAIR_ROWS; --hidPass) {
+    for (uint8_t i = 0; i < total && count < MAX_PAIR_ROWS; ++i) {
+      const auto& d = BleHid.device(i);
+      if (d.hid != (hidPass == 1)) continue;
+      items[count].label = d.name;
+      items[count].subtitle = d.addr;
+      items[count].value = d.hid ? "HID" : "";
+      items[count].actionValue = i;
+      count++;
+    }
   }
   if (count > 0) {
     ListProps lp;

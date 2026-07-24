@@ -71,6 +71,7 @@ class WriterApp : public App {
 
   // --- menu / drawing ----------------------------------------------------------
   void menuActivate(int16_t row);
+  void tryPendingConnect();  // issue a picked pairing once the BLE conn task is free
   static void drawScreen(UiApp::ScreenType& screen, void* self);
   void drawEditor(UiApp::ScreenType& screen);
   void drawMenu(UiApp::ScreenType& screen);
@@ -107,7 +108,9 @@ class WriterApp : public App {
   bool scanKicked_ = false;
   bool lastConnected_ = false;
   uint32_t lastScanDraw_ = 0;
-  char pairMsg_[64] = {0};  // passkey prompt / connect-failure note
+  char pairMsg_[64] = {0};       // passkey prompt / connect-failure note
+  char pendingAddr_[18] = {0};   // picked keyboard waiting for the SDK conn task
+  bool userConnect_ = false;     // the in-flight attempt is the user's pick (show its failure)
 
   // status-bar scratch (rebuilt each draw; fixed so drawing never allocates)
   char stLeft_[80];
