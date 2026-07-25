@@ -17,6 +17,46 @@ the USB-C data cable). Total time: about 15 minutes.
 > keyboard changing its Bluetooth address, which Logitech keyboards do
 > every 15 minutes or so.
 
+## Pairing a SECOND (new) keyboard — read this if the first one already works
+
+Several fixes landed for the "I bought a different keyboard and it won't
+connect" case. Update with Part A (note the branch name above changed),
+then know what to expect:
+
+1. **Picking a keyboard from the list now always answers.** Before, while
+   the device was quietly busy trying to reach the *old* keyboard in the
+   background, pressing CONFIRM on the new one could silently do nothing —
+   it looked frozen. Now the screen says **"Connecting to \<name\>..."**
+   the moment you pick, and the device finishes the background attempt,
+   cancels it, and connects to your pick by itself (this can take a few
+   seconds — that's normal, leave it be).
+2. **The scan never stops while the pairing screen is open.** You can open
+   the screen first and put the keyboard into pairing mode after — it
+   appears by itself. No more racing the Rescan button.
+3. **Keyboards float to the top of the list.** Gadgets that aren't
+   keyboards (TVs, earbuds) can no longer crowd your keyboard off the
+   8-row screen. Rows tagged **HID** are keyboard-like devices — yours
+   should be near the top.
+4. **Keyboards that ask for special connection settings are accommodated.**
+   Some keyboards (several Logitech models) pair fine and then hang up
+   within a second or two because the old firmware refused a technical
+   request they make right after pairing. It is now accepted, the same way
+   phones and laptops do.
+5. **There's a "Forget keyboards" row in the Writer menu.** The device can
+   store at most **3** keyboards; at the limit, new pairings fail (the
+   pairing screen warns "storage full"). Select a keyboard there and press
+   CONFIRM to remove it — re-pairing later is quick. This finally makes the
+   PC-based full erase unnecessary for keyboard problems.
+6. **The status bar tells you what the keyboard is doing.** "Keyboard
+   connected" / "Keyboard disconnected" appear whenever the link comes or
+   goes — including the automatic reconnect after sleep, so the sleep/wake
+   and 20-minute checks below are easier to read.
+
+Your old keyboard stays paired — both will connect automatically, whichever
+is switched on. And the same advice as Part B still applies to the NEW
+keyboard: make it forget any half-finished pairing attempts (hold its
+Bluetooth/pairing button until the light blinks fast) before trying again.
+
 ---
 
 ## Part A — Update and re-flash (≈10 min)
@@ -26,7 +66,7 @@ Open a terminal (`Ctrl+Alt+T`) and paste, one line at a time:
 ```sh
 cd ~/ereader_firmware
 git fetch
-git checkout feedback-fixes-and-features
+git checkout claude/logitech-keyboard-connection-npc2ij
 git pull
 git submodule update --init
 pio run -e xteink

@@ -38,7 +38,7 @@ class WriterApp : public App {
   void saveIfDirty();
 
  private:
-  enum class Mode : uint8_t { Editing, Menu, Pairing, FilePicker };
+  enum class Mode : uint8_t { Editing, Menu, Pairing, FilePicker, Forget };
 
   static constexpr size_t CAP = 32 * 1024;  // per-document limit (~5k words)
   static constexpr int MAX_FILES = 32;      // picker cap across /docs + /decks
@@ -71,11 +71,14 @@ class WriterApp : public App {
 
   // --- menu / drawing ----------------------------------------------------------
   void menuActivate(int16_t row);
+  void tryPendingConnect();  // issue a picked pairing once the BLE conn task is free
+  void forgetSelected();     // drop the bond under the Forget-screen cursor
   static void drawScreen(UiApp::ScreenType& screen, void* self);
   void drawEditor(UiApp::ScreenType& screen);
   void drawMenu(UiApp::ScreenType& screen);
   void drawPairing(UiApp::ScreenType& screen);
   void drawFilePicker(UiApp::ScreenType& screen);
+  void drawForget(UiApp::ScreenType& screen);
   size_t wordCount() const;
 
   AppContext* ctx_ = nullptr;
@@ -107,7 +110,11 @@ class WriterApp : public App {
   bool scanKicked_ = false;
   bool lastConnected_ = false;
   uint32_t lastScanDraw_ = 0;
-  char pairMsg_[64] = {0};  // passkey prompt / connect-failure note
+  char pairMsg_[64] = {0};       // passkey prompt / connect-failure note
+  char pendingAddr_[18] = {0};   // picked keyboard waiting for the SDK conn task
+  bool userConnect_ = false;     // the in-flight attempt is the user's pick (show its failure)
+  uint32_t scanDrawSig_ = 0;     // last drawn scan-list content (skip no-change redraws)
+  int16_t forgetSel_ = 0;        // Forget-keyboards screen selection
 
   // status-bar scratch (rebuilt each draw; fixed so drawing never allocates)
   char stLeft_[80];
